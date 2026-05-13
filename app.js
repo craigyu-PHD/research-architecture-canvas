@@ -1,5 +1,5 @@
 const svgNS = "http://www.w3.org/2000/svg";
-const storageVersion = "2026-05-13-v3";
+const storageVersion = "2026-05-13-v4";
 
 const sampleText = `研究主題：AI 輔助決策下數位治理與民權保障之研究
 副標題：從文獻綜述、制度分析到政策建議的研究圖
@@ -143,9 +143,22 @@ let lineMode = false;
 let pendingLineSource = null;
 let currentEdgePreset = { line: "curved", style: "solid", arrow: "end" };
 let dragNode = null;
+let resizeDrag = null;
+let edgeAnchorDrag = null;
 let panDrag = null;
 let inlineEditor = null;
 let pendingExportMode = "export";
+
+const resizeHandleDefs = [
+  ["nw", 0, 0, "nwse-resize"],
+  ["n", 0.5, 0, "ns-resize"],
+  ["ne", 1, 0, "nesw-resize"],
+  ["e", 1, 0.5, "ew-resize"],
+  ["se", 1, 1, "nwse-resize"],
+  ["s", 0.5, 1, "ns-resize"],
+  ["sw", 0, 1, "nesw-resize"],
+  ["w", 0, 0.5, "ew-resize"],
+];
 
 const els = {};
 
@@ -392,26 +405,7 @@ function buildDiagram(parsed, diagramType) {
   const steps = chooseSteps(parsed, diagramType);
   base.nodes = steps.map((step, index) => nodeForStep(step, index, diagramType, parsed));
   arrangeNodes(base.nodes, diagramType, base.canvas);
-  base.edges = base.nodes.slice(0, -1).map((node, index) => ({
-    id: `edge-${node.id}-${base.nodes[index + 1].id}`,
-    from: node.id,
-    to: base.nodes[index + 1].id,
-    label: "",
-    line: diagramType === "timeline" ? "straight" : "curved",
-    style: "solid",
-    arrow: "end",
-  }));
-  if (diagramType === "network" && base.nodes.length > 3) {
-    base.edges = base.nodes.slice(1).map((node) => ({
-      id: `edge-${base.nodes[0].id}-${node.id}`,
-      from: base.nodes[0].id,
-      to: node.id,
-      label: "",
-      line: "curved",
-      style: "solid",
-      arrow: "end",
-    }));
-  }
+  base.edges = buildSmartEdges(base.nodes, diagramType);
   base.flow = base.nodes.map((node) => node.title).join(" → ");
   return base;
 }
@@ -462,12 +456,28 @@ function templateNode(id, number, title, body, shape, palette, x, y, w, h) {
 }
 
 function templateEdge(from, to, label, line, style, arrow) {
-  return { id: `tpl-edge-${from}-${to}`, from: `tpl-${from}`, to: `tpl-${to}`, label, line, style, arrow };
+  return {
+    id: `tpl-edge-${from}-${to}`,
+    from: `tpl-${from}`,
+    to: `tpl-${to}`,
+    label,
+    line,
+    style,
+    arrow,
+    fromAnchor: null,
+    toAnchor: null,
+  };
 }
 
 function chooseSteps(parsed, diagramType) {
+  if (diagramType === "flowchart") return composeResearchSteps(parsed).slice(0, 9);
   if (diagramType === "framework" || diagramType === "causal") {
-    const items = parsed.frameworkSteps.length ? parsed.frameworkSteps : parsed.flowSteps;
+    const items = uniqueClean([
+      "研究問題",
+      ...(parsed.frameworkSteps.length ? parsed.frameworkSteps : parsed.flowSteps.slice(0, 4)),
+      ...(parsed.coreSteps.length ? parsed.coreSteps.slice(0, 2) : []),
+      parsed.outputs[0] || "研究輸出",
+    ]);
     return withFallback(items, ["研究問題", "核心概念", "理論架構", "分析命題", "研究輸出"]);
   }
   if (diagramType === "methodology") {
@@ -491,7 +501,18 @@ function chooseSteps(parsed, diagramType) {
   if (diagramType === "hierarchy") {
     return withFallback(parsed.frameworkSteps.concat(parsed.flowSteps), ["總研究問題", "理論層", "方法層", "分析層", "輸出層"]);
   }
-  return withFallback(parsed.flowSteps, ["研究問題界定", "資料來源盤點", "研究架構建立", "核心分析", "檢核機制", "研究輸出"]);
+  return composeResearchSteps(parsed).slice(0, 9);
+}
+
+function composeResearchSteps(parsed) {
+  return withFallback(uniqueClean([
+    parsed.frameworkSteps[0] || parsed.flowSteps[0] || "研究問題界定",
+    ...(parsed.inputItems.length ? [parsed.inputItems[0]] : ["資料來源盤點"]),
+    ...(parsed.frameworkSteps.length > 1 ? parsed.frameworkSteps.slice(1, 3) : ["理論架構建立"]),
+    ...(parsed.coreSteps.length ? parsed.coreSteps.slice(0, 3) : parsed.flowSteps.slice(1, 4)),
+    "檢核與修正",
+    parsed.outputs[0] || "研究輸出",
+  ]), ["研究問題界定", "資料來源盤點", "研究架構建立", "核心分析", "檢核與修正", "研究輸出"]);
 }
 
 function withFallback(items, fallback) {
@@ -533,6 +554,7 @@ function nodeForStep(step, index, diagramType, parsed) {
     number: index + 1,
     title: step,
     body: bodyForRole(role, parsed),
+    role,
     shape,
     palette,
     x: 360,
@@ -558,6 +580,63 @@ function classifyStep(step, index) {
   }
   if (index === 0) return "framework";
   return "process";
+}
+
+function buildSmartEdges(nodes, diagramType) {
+  if (nodes.length < 2) return [];
+  if (diagramType === "network") {
+    return nodes.slice(1).map((node, index) => smartEdge(nodes[0], node, index, "影響", "curved", "solid"));
+  }
+  const edges = nodes.slice(0, -1).map((node, index) => {
+    const next = nodes[index + 1];
+    const relation = relationLabel(node, next);
+    const line = diagramType === "timeline" ? "straight" : relation.line;
+    return smartEdge(node, next, index, relation.label, line, relation.style);
+  });
+  const validationIndex = nodes.findIndex((node) => node.role === "validation" || /檢核|驗證|修正|信度|效度/.test(node.title));
+  const methodIndex = nodes.findIndex((node) => node.role === "method" || /方法|分析|模型|編碼/.test(node.title));
+  if (validationIndex > methodIndex && methodIndex >= 0) {
+    edges.push(smartEdge(nodes[validationIndex], nodes[methodIndex], edges.length, "回饋修正", "curved", "feedback"));
+  }
+  const outputIndex = nodes.findIndex((node) => node.role === "output");
+  if (outputIndex > 1 && diagramType !== "timeline") {
+    edges.push(smartEdge(nodes[outputIndex], nodes[0], edges.length, "形成新問題", "curved", "dashed"));
+  }
+  return edges;
+}
+
+function relationLabel(from, to) {
+  if (from.role === "input" && to.role === "method") return { label: "分析", line: "curved", style: "solid" };
+  if (from.role === "framework" && to.role === "input") return { label: "操作化", line: "curved", style: "solid" };
+  if (to.role === "validation") return { label: "檢核", line: "curved", style: "dashed" };
+  if (to.role === "output") return { label: "產出", line: "curved", style: "solid" };
+  if (from.role === "reference") return { label: "支撐", line: "curved", style: "dashed" };
+  return { label: "", line: "curved", style: "solid" };
+}
+
+function smartEdge(from, to, index, label, line, style) {
+  return {
+    id: `edge-${from.id}-${to.id}-${index}`,
+    from: from.id,
+    to: to.id,
+    label,
+    line,
+    style,
+    arrow: "end",
+    fromAnchor: preferredAnchor(from, to, "from"),
+    toAnchor: preferredAnchor(to, from, "to"),
+  };
+}
+
+function preferredAnchor(node, other, direction) {
+  const cx = node.x + node.w / 2;
+  const cy = node.y + node.h / 2;
+  const ox = other.x + other.w / 2;
+  const oy = other.y + other.h / 2;
+  const dx = ox - cx;
+  const dy = oy - cy;
+  if (Math.abs(dx) > Math.abs(dy)) return { x: dx > 0 ? 1 : 0, y: 0.5 };
+  return { x: 0.5, y: dy > 0 ? 1 : 0 };
 }
 
 function arrangeNodes(nodes, diagramType, canvas) {
@@ -696,8 +775,8 @@ function drawEdges(svg) {
     const from = nodesById.get(edge.from);
     const to = nodesById.get(edge.to);
     if (!from || !to) return;
-    const start = anchorPoint(from, to);
-    const end = anchorPoint(to, from);
+    const start = edgeAnchorPoint(from, edge.fromAnchor) || anchorPoint(from, to);
+    const end = edgeAnchorPoint(to, edge.toAnchor) || anchorPoint(to, from);
     const path = edgePath(start, end, edge.line);
     const selectedEdge = selected.kind === "edge" && selected.id === edge.id;
     const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": 18, cursor: "pointer" });
@@ -709,6 +788,8 @@ function drawEdges(svg) {
     svg.appendChild(hit);
     const attrs = {
       d: path,
+      class: "edge-line",
+      "data-edge-line": edge.id,
       fill: "none",
       stroke: selectedEdge ? "#f97316" : "var(--svg-ink)",
       "stroke-width": selectedEdge ? 3 : 2,
@@ -719,6 +800,31 @@ function drawEdges(svg) {
     if (edge.arrow === "both") attrs["marker-start"] = "url(#arrowStart)";
     svg.appendChild(svgEl("path", attrs));
     if (edge.label) drawEdgeLabel(svg, edge.label, start, end);
+    if (selectedEdge) drawEdgeEndpointHandles(svg, edge, start, end);
+  });
+}
+
+function drawEdgeEndpointHandles(svg, edge, start, end) {
+  [
+    ["from", start, "#2563eb"],
+    ["to", end, "#f97316"],
+  ].forEach(([endKey, point, color]) => {
+    const handle = svgEl("circle", {
+      class: "edge-endpoint edit-only",
+      cx: point.x,
+      cy: point.y,
+      r: 8,
+      fill: "var(--canvas)",
+      stroke: color,
+      "stroke-width": 3,
+      cursor: "crosshair",
+    });
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      edgeAnchorDrag = { edgeId: edge.id, end: endKey };
+    });
+    svg.appendChild(handle);
   });
 }
 
@@ -737,6 +843,7 @@ function drawNode(svg, node) {
   const isLineSource = pendingLineSource === node.id;
   if (isSelected || isLineSource) {
     group.appendChild(svgEl("rect", {
+      class: "selection-ring edit-only",
       x: node.x - 10,
       y: node.y - 10,
       width: node.w + 20,
@@ -749,13 +856,10 @@ function drawNode(svg, node) {
     }));
   }
   drawShape(group, node, palette);
-  if (node.number) {
-    group.appendChild(svgEl("circle", { cx: node.x, cy: node.y + 32, r: 21, fill: "var(--canvas)", stroke: palette.stroke, "stroke-width": 2 }));
-    group.appendChild(svgText(String(node.number), node.x, node.y + 39, { "text-anchor": "middle", "font-size": 18, "font-weight": 850, fill: palette.stroke }));
-  }
   const textWidth = node.shape === "diamond" ? node.w * 0.58 : node.shape === "triangle" ? node.w * 0.55 : node.w - 48;
   appendWrappedText(group, node.title, node.x + node.w / 2, node.y + node.h * 0.43, textWidth, { "text-anchor": "middle", "font-size": 17, "font-weight": 850, fill: nodeTextColor(node, "title") }, 2);
   appendWrappedText(group, node.body, node.x + node.w / 2, node.y + node.h * 0.66, textWidth, { "text-anchor": "middle", "font-size": 13, fill: nodeTextColor(node, "body") }, 2);
+  if (isSelected && !lineMode) drawResizeHandles(group, node);
   group.addEventListener("mousedown", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -774,6 +878,42 @@ function drawNode(svg, node) {
     openNodeInlineEditor(node);
   });
   svg.appendChild(group);
+}
+
+function drawResizeHandles(group, node) {
+  resizeHandleDefs.forEach(([handle, px, py, cursor]) => {
+    const x = node.x + node.w * px;
+    const y = node.y + node.h * py;
+    const rect = svgEl("rect", {
+      class: "resize-handle edit-only",
+      "data-handle": handle,
+      x: x - 6,
+      y: y - 6,
+      width: 12,
+      height: 12,
+      rx: 3,
+      fill: "var(--canvas)",
+      stroke: "#2563eb",
+      "stroke-width": 2,
+      cursor,
+    });
+    rect.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const point = clientToSvg(event.clientX, event.clientY);
+      resizeDrag = {
+        id: node.id,
+        handle,
+        startX: point.x,
+        startY: point.y,
+        x: node.x,
+        y: node.y,
+        w: node.w,
+        h: node.h,
+      };
+    });
+    group.appendChild(rect);
+  });
 }
 
 function drawShape(group, node, palette) {
@@ -891,6 +1031,12 @@ function handleLineNodeClick(nodeId) {
     label: "",
     ...currentEdgePreset,
   };
+  const source = state.nodes.find((node) => node.id === pendingLineSource);
+  const target = state.nodes.find((node) => node.id === nodeId);
+  if (source && target) {
+    edge.fromAnchor = preferredAnchor(source, target, "from");
+    edge.toAnchor = preferredAnchor(target, source, "to");
+  }
   state.edges.push(edge);
   selected = { kind: "edge", id: edge.id };
   pendingLineSource = null;
@@ -917,6 +1063,23 @@ function startCanvasPan(event) {
 }
 
 function onDocumentMouseMove(event) {
+  if (resizeDrag) {
+    const node = state.nodes.find((item) => item.id === resizeDrag.id);
+    if (!node) return;
+    resizeSelectedNode(node, event);
+    render();
+    return;
+  }
+  if (edgeAnchorDrag) {
+    const edge = state.edges.find((item) => item.id === edgeAnchorDrag.edgeId);
+    if (!edge) return;
+    const nodeId = edgeAnchorDrag.end === "from" ? edge.from : edge.to;
+    const node = state.nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    edge[`${edgeAnchorDrag.end}Anchor`] = pointToBoundaryAnchor(node, clientToSvg(event.clientX, event.clientY));
+    render();
+    return;
+  }
   if (dragNode) {
     const node = state.nodes.find((item) => item.id === dragNode.id);
     if (!node) return;
@@ -935,6 +1098,21 @@ function onDocumentMouseMove(event) {
 }
 
 function onDocumentMouseUp() {
+  if (resizeDrag) {
+    const node = state.nodes.find((item) => item.id === resizeDrag.id);
+    if (node && snapToGrid) {
+      node.x = snap(node.x);
+      node.y = snap(node.y);
+      node.w = Math.max(80, snap(node.w));
+      node.h = Math.max(60, snap(node.h));
+    }
+    resizeDrag = null;
+    render();
+  }
+  if (edgeAnchorDrag) {
+    edgeAnchorDrag = null;
+    render();
+  }
   if (dragNode) {
     const node = state.nodes.find((item) => item.id === dragNode.id);
     if (node && snapToGrid) {
@@ -950,6 +1128,41 @@ function onDocumentMouseUp() {
     els.canvasScroll.classList.remove("panning");
     if (needsRender) render();
   }
+}
+
+function resizeSelectedNode(node, event) {
+  const point = clientToSvg(event.clientX, event.clientY);
+  const dx = point.x - resizeDrag.startX;
+  const dy = point.y - resizeDrag.startY;
+  const handle = resizeDrag.handle;
+  let nextX = resizeDrag.x;
+  let nextY = resizeDrag.y;
+  let nextW = resizeDrag.w;
+  let nextH = resizeDrag.h;
+  const minW = 82;
+  const minH = 58;
+  if (handle.includes("e")) nextW = resizeDrag.w + dx;
+  if (handle.includes("s")) nextH = resizeDrag.h + dy;
+  if (handle.includes("w")) {
+    nextX = resizeDrag.x + dx;
+    nextW = resizeDrag.w - dx;
+  }
+  if (handle.includes("n")) {
+    nextY = resizeDrag.y + dy;
+    nextH = resizeDrag.h - dy;
+  }
+  if (nextW < minW) {
+    if (handle.includes("w")) nextX -= minW - nextW;
+    nextW = minW;
+  }
+  if (nextH < minH) {
+    if (handle.includes("n")) nextY -= minH - nextH;
+    nextH = minH;
+  }
+  node.x = clamp(nextX, 24, state.canvas.width - minW - 24);
+  node.y = clamp(nextY, 140, state.canvas.height - minH - 100);
+  node.w = clamp(nextW, minW, state.canvas.width - node.x - 24);
+  node.h = clamp(nextH, minH, state.canvas.height - node.y - 100);
 }
 
 function onCanvasWheel(event) {
@@ -1039,31 +1252,156 @@ function closeInlineEditor(commit) {
 
 function renderLegendEditor() {
   if (!els.legendEditor) return;
-  const items = buildLegendItems();
+  const items = state.nodes.slice().sort((a, b) => a.number - b.number);
   els.legendEditor.innerHTML = "";
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "目前畫布沒有可產生圖例的圖框。";
+    empty.textContent = "目前畫布沒有可編輯的圖框。";
     els.legendEditor.appendChild(empty);
     return;
   }
-  items.forEach((item) => {
-    const row = document.createElement("label");
-    row.className = "legend-row";
-    const swatch = document.createElement("span");
-    swatch.className = `legend-swatch ${item.shape}`;
-    swatch.style.setProperty("--swatch-fill", (palettes[item.palette] || palettes.process).fill);
-    swatch.style.setProperty("--swatch-stroke", (palettes[item.palette] || palettes.process).stroke);
-    const input = document.createElement("input");
-    input.value = item.label;
-    input.addEventListener("change", () => {
-      setLegendLabel(item.key, input.value.trim() || item.defaultLabel);
+  items.forEach((node) => {
+    const card = document.createElement("article");
+    card.className = "node-editor-card";
+    card.classList.toggle("active", selected.kind === "node" && selected.id === node.id);
+    const palette = palettes[node.palette] || palettes.process;
+    const head = document.createElement("div");
+    head.className = "node-editor-head";
+    const badge = document.createElement("button");
+    badge.className = "node-number-badge";
+    badge.type = "button";
+    badge.textContent = String(node.number);
+    badge.title = `選取第 ${node.number} 個圖框`;
+    badge.addEventListener("click", () => {
+      selected = { kind: "node", id: node.id };
       render();
     });
-    row.append(swatch, input);
-    els.legendEditor.appendChild(row);
+    const swatch = document.createElement("span");
+    swatch.className = `legend-swatch ${node.shape}`;
+    swatch.style.setProperty("--swatch-fill", palette.fill);
+    swatch.style.setProperty("--swatch-stroke", palette.stroke);
+    const meta = document.createElement("div");
+    meta.className = "node-editor-meta";
+    meta.innerHTML = `<strong>圖框 ${node.number}</strong><span>${shapeLabels[node.shape] || "圖框"} · ${paletteLabel(node.palette)}</span>`;
+    head.append(badge, swatch, meta);
+
+    const title = editorInput("標題", node.title, (value) => {
+      node.title = value || `圖框 ${node.number}`;
+    }, () => {
+      rebuildFlow();
+      render();
+    });
+    const body = editorTextarea("說明", node.body, (value) => {
+      node.body = value;
+    }, render);
+
+    const controlGrid = document.createElement("div");
+    controlGrid.className = "node-editor-grid";
+    controlGrid.append(
+      editorSelect("形狀", node.shape, shapeLabels, (value) => {
+        node.shape = value;
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+      editorSelect("顏色", node.palette, paletteLabels(), (value) => {
+        node.palette = value;
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+      editorNumber("寬", node.w, 80, 900, (value) => {
+        node.w = clamp(value, 80, 900);
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+      editorNumber("高", node.h, 58, 520, (value) => {
+        node.h = clamp(value, 58, 520);
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+    );
+    card.append(head, title, body, controlGrid);
+    els.legendEditor.appendChild(card);
   });
+}
+
+function editorInput(labelText, value, onInput, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field";
+  label.textContent = labelText;
+  const input = document.createElement("input");
+  input.value = value || "";
+  input.addEventListener("input", () => {
+    onInput(input.value.trim());
+    saveLocal(false);
+  });
+  input.addEventListener("change", onChange);
+  label.appendChild(input);
+  return label;
+}
+
+function editorTextarea(labelText, value, onInput, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field";
+  label.textContent = labelText;
+  const textarea = document.createElement("textarea");
+  textarea.value = value || "";
+  textarea.addEventListener("input", () => {
+    onInput(textarea.value.trim());
+    saveLocal(false);
+  });
+  textarea.addEventListener("change", onChange);
+  label.appendChild(textarea);
+  return label;
+}
+
+function editorSelect(labelText, value, options, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field";
+  label.textContent = labelText;
+  const select = document.createElement("select");
+  Object.entries(options).forEach(([optionValue, optionLabel]) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = optionLabel;
+    select.appendChild(option);
+  });
+  select.value = value;
+  select.addEventListener("change", () => onChange(select.value));
+  label.appendChild(select);
+  return label;
+}
+
+function editorNumber(labelText, value, min, max, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field";
+  label.textContent = labelText;
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = min;
+  input.max = max;
+  input.value = Math.round(value);
+  input.addEventListener("change", () => onChange(Number(input.value) || value));
+  label.appendChild(input);
+  return label;
+}
+
+function paletteLabels() {
+  return {
+    process: "流程藍",
+    concept: "概念紫",
+    data: "資料青",
+    method: "方法橙",
+    decision: "判斷紅",
+    output: "輸出綠",
+    reference: "文獻綠",
+    warning: "限制黃",
+    node: "節點藍",
+  };
+}
+
+function paletteLabel(key) {
+  return paletteLabels()[key] || "自訂色";
 }
 
 function syncDiagramInputs() {
@@ -1323,6 +1661,11 @@ function serializedSvg() {
   const clone = els.diagramCanvas.cloneNode(true);
   clone.removeAttribute("style");
   clone.setAttribute("xmlns", svgNS);
+  clone.querySelectorAll(".edit-only").forEach((element) => element.remove());
+  clone.querySelectorAll("[data-edge-line]").forEach((element) => {
+    element.setAttribute("stroke", "var(--svg-ink)");
+    element.setAttribute("stroke-width", "2");
+  });
   inlineSvgVars(clone);
   return new XMLSerializer().serializeToString(clone);
 }
@@ -1464,6 +1807,16 @@ function normalizeEdge(edge) {
     line: edge.line || "curved",
     style: edge.style || "solid",
     arrow: edge.arrow || "end",
+    fromAnchor: normalizeAnchor(edge.fromAnchor),
+    toAnchor: normalizeAnchor(edge.toAnchor),
+  };
+}
+
+function normalizeAnchor(anchor) {
+  if (!anchor || typeof anchor !== "object") return null;
+  return {
+    x: clamp(Number(anchor.x ?? 0.5), 0, 1),
+    y: clamp(Number(anchor.y ?? 0.5), 0, 1),
   };
 }
 
@@ -1528,6 +1881,30 @@ function anchorPoint(node, target) {
   const dy = ty - cy;
   if (Math.abs(dx) > Math.abs(dy)) return { x: dx > 0 ? node.x + node.w : node.x, y: cy };
   return { x: cx, y: dy > 0 ? node.y + node.h : node.y };
+}
+
+function edgeAnchorPoint(node, anchor) {
+  if (!anchor) return null;
+  return {
+    x: node.x + node.w * clamp(anchor.x, 0, 1),
+    y: node.y + node.h * clamp(anchor.y, 0, 1),
+  };
+}
+
+function pointToBoundaryAnchor(node, point) {
+  const localX = clamp((point.x - node.x) / node.w, 0, 1);
+  const localY = clamp((point.y - node.y) / node.h, 0, 1);
+  const distances = [
+    ["left", localX],
+    ["right", 1 - localX],
+    ["top", localY],
+    ["bottom", 1 - localY],
+  ];
+  const side = distances.sort((a, b) => a[1] - b[1])[0][0];
+  if (side === "left") return { x: 0, y: localY };
+  if (side === "right") return { x: 1, y: localY };
+  if (side === "top") return { x: localX, y: 0 };
+  return { x: localX, y: 1 };
 }
 
 function edgePath(start, end, line) {
