@@ -1,5 +1,5 @@
 const svgNS = "http://www.w3.org/2000/svg";
-const storageVersion = "2026-05-13-v5";
+const storageVersion = "2026-05-13-v6";
 
 const sampleText = `研究主題：AI 輔助決策下數位治理與民權保障之研究
 副標題：從文獻綜述、制度分析到政策建議的研究圖
@@ -35,7 +35,7 @@ const diagramTypes = {
   },
   framework: {
     label: "研究架構圖",
-    defaultShape: "ellipse",
+    defaultShape: "rounded",
     defaultPalette: "concept",
     flowHint: "把概念、變項與命題放成層次關係。",
   },
@@ -209,6 +209,7 @@ function bindElements() {
     "exportJsonBtn",
     "importJsonInput",
     "legendEditor",
+    "edgeEditor",
     "diagramTitleInput",
     "diagramSubtitleInput",
     "diagramFlowInput",
@@ -694,16 +695,7 @@ function arrangeNodes(nodes, diagramType, canvas) {
     return;
   }
   if (diagramType === "framework" || diagramType === "causal" || diagramType === "hierarchy") {
-    canvas.width = 1400;
-    canvas.height = Math.max(1300, nodes.length * 145 + 460);
-    const columns = [180, 520, 860];
-    nodes.forEach((node, index) => {
-      const col = index === 0 ? 0 : index === nodes.length - 1 ? 2 : 1;
-      node.x = columns[col];
-      node.y = 270 + index * 125;
-      node.w = col === 1 ? 410 : 300;
-      node.h = node.shape === "diamond" ? 145 : 108;
-    });
+    arrangeFrameworkNodes(nodes, canvas);
     return;
   }
   canvas.width = 1400;
@@ -713,6 +705,44 @@ function arrangeNodes(nodes, diagramType, canvas) {
     node.y = 245 + index * 148;
     node.w = node.shape === "diamond" ? 320 : 420;
     node.h = node.shape === "diamond" ? 145 : 108;
+  });
+}
+
+function arrangeFrameworkNodes(nodes, canvas) {
+  canvas.width = 1480;
+  const centerX = canvas.width / 2;
+  const middle = nodes.slice(1, -1);
+  const rows = Math.max(1, Math.ceil(middle.length / 3));
+  canvas.height = Math.max(1180, 520 + rows * 190);
+  nodes.forEach((node, index) => {
+    if (index === 0) {
+      node.x = centerX - 210;
+      node.y = 230;
+      node.w = 420;
+      node.h = 104;
+      node.shape = node.shape === "ellipse" ? "rounded" : node.shape;
+      return;
+    }
+    if (index === nodes.length - 1) {
+      node.x = centerX - 220;
+      node.y = 445 + rows * 180;
+      node.w = 440;
+      node.h = 106;
+      node.shape = "pill";
+      node.palette = "output";
+      return;
+    }
+    const inner = index - 1;
+    const countInRow = middle.length <= 2 ? middle.length : 3;
+    const col = inner % countInRow;
+    const row = Math.floor(inner / countInRow);
+    const gap = 46;
+    const w = countInRow === 1 ? 420 : countInRow === 2 ? 360 : 310;
+    const totalW = countInRow * w + (countInRow - 1) * gap;
+    node.x = centerX - totalW / 2 + col * (w + gap);
+    node.y = 420 + row * 180;
+    node.w = w;
+    node.h = node.shape === "diamond" ? 138 : 106;
   });
 }
 
@@ -731,6 +761,7 @@ function render() {
   drawLegend(svg);
   drawFlow(svg);
   renderLegendEditor();
+  renderEdgeEditor();
   syncDiagramInputs();
   updateLineModeUi();
   updateSnapUi();
@@ -745,22 +776,31 @@ function applyCanvasTransform() {
 
 function addDefs(svg) {
   const defs = svgEl("defs");
-  defs.appendChild(markerDef("arrowEnd", "M2,2 L10,6 L2,10 Z", 10, 6));
-  defs.appendChild(markerDef("arrowStart", "M10,2 L2,6 L10,10 Z", 2, 6));
+  [
+    ["Ink", "var(--svg-ink)"],
+    ["Muted", "var(--svg-muted)"],
+    ["Accent", "var(--accent)"],
+    ["Soft", "#2563eb"],
+    ["Selected", "#f97316"],
+  ].forEach(([name, color]) => {
+    defs.appendChild(markerDef(`arrowEnd${name}`, "M2,2 L11,6 L2,10 Z", 11, 6, color));
+    defs.appendChild(markerDef(`arrowStart${name}`, "M10,2 L1,6 L10,10 Z", 1, 6, color));
+  });
   svg.appendChild(defs);
 }
 
-function markerDef(id, path, refX, refY) {
+function markerDef(id, path, refX, refY, color) {
   const marker = svgEl("marker", {
     id,
-    markerWidth: 12,
-    markerHeight: 12,
+    markerWidth: 14,
+    markerHeight: 14,
     refX,
     refY,
     orient: "auto",
     markerUnits: "strokeWidth",
+    overflow: "visible",
   });
-  marker.appendChild(svgEl("path", { d: path, fill: "currentColor" }));
+  marker.appendChild(svgEl("path", { d: path, fill: color }));
   return marker;
 }
 
@@ -786,8 +826,8 @@ function drawEdges(svg) {
     const from = nodesById.get(edge.from);
     const to = nodesById.get(edge.to);
     if (!from || !to) return;
-    const start = edgeAnchorPoint(from, edge.fromAnchor) || anchorPoint(from, to);
-    const end = edgeAnchorPoint(to, edge.toAnchor) || anchorPoint(to, from);
+    const start = edgeEndpointPoint(from, to, edge.fromAnchor);
+    const end = edgeEndpointPoint(to, from, edge.toAnchor);
     const path = edgePath(start, end, edge.line, edge.points || []);
     const selectedEdge = selected.kind === "edge" && selected.id === edge.id;
     const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": 18, cursor: "pointer" });
@@ -795,6 +835,12 @@ function drawEdges(svg) {
       event.stopPropagation();
       selected = { kind: "edge", id: edge.id };
       render();
+    });
+    hit.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const point = clientToSvg(event.clientX, event.clientY);
+      insertEdgePointAt(edge, start, end, point);
     });
     svg.appendChild(hit);
     if (edge.tone === "soft") {
@@ -821,10 +867,11 @@ function drawEdges(svg) {
       "stroke-linejoin": "round",
       "pointer-events": "none",
     };
-    if (edge.arrow === "end" || edge.arrow === "both") attrs["marker-end"] = "url(#arrowEnd)";
-    if (edge.arrow === "both") attrs["marker-start"] = "url(#arrowStart)";
+    const markerTone = selectedEdge ? "Selected" : markerToneName(edge);
+    if (edge.arrow === "end" || edge.arrow === "both") attrs["marker-end"] = `url(#arrowEnd${markerTone})`;
+    if (edge.arrow === "start" || edge.arrow === "both") attrs["marker-start"] = `url(#arrowStart${markerTone})`;
     svg.appendChild(svgEl("path", attrs));
-    if (edge.label) drawEdgeLabel(svg, edge.label, start, end);
+    if (edge.label) drawEdgeLabel(svg, edge, start, end);
     if (selectedEdge) drawEdgeEditHandles(svg, edge, start, end);
   });
 }
@@ -834,11 +881,25 @@ function drawEdgeEditHandles(svg, edge, start, end) {
     ["from", start, "#2563eb"],
     ["to", end, "#f97316"],
   ].forEach(([endKey, point, color]) => {
+    const hit = svgEl("circle", {
+      class: "edge-endpoint-hit edit-only",
+      cx: point.x,
+      cy: point.y,
+      r: 19,
+      fill: "transparent",
+      cursor: "crosshair",
+    });
+    hit.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      edgeAnchorDrag = { edgeId: edge.id, end: endKey };
+    });
+    svg.appendChild(hit);
     const handle = svgEl("circle", {
       class: "edge-endpoint edit-only",
       cx: point.x,
       cy: point.y,
-      r: 8,
+      r: 10,
       fill: "var(--canvas)",
       stroke: color,
       "stroke-width": 3,
@@ -852,14 +913,13 @@ function drawEdgeEditHandles(svg, edge, start, end) {
     svg.appendChild(handle);
   });
   const points = editableEdgePoints(edge, start, end);
+  drawEdgeSegmentHandles(svg, edge, start, end, points);
   points.forEach((point, index) => {
-    const handle = svgEl("rect", {
+    const handle = svgEl("circle", {
       class: "edge-point edit-only",
-      x: point.x - 7,
-      y: point.y - 7,
-      width: 14,
-      height: 14,
-      rx: 4,
+      cx: point.x,
+      cy: point.y,
+      r: 8,
       fill: "var(--canvas)",
       stroke: "#7c3aed",
       "stroke-width": 2.4,
@@ -875,6 +935,38 @@ function drawEdgeEditHandles(svg, edge, start, end) {
   });
 }
 
+function drawEdgeSegmentHandles(svg, edge, start, end, points) {
+  const route = [start, ...points, end];
+  route.slice(0, -1).forEach((point, index) => {
+    const next = route[index + 1];
+    const middle = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
+    const handle = svgEl("g", { class: "edge-add-point edit-only", cursor: "copy" });
+    handle.appendChild(svgEl("circle", {
+      cx: middle.x,
+      cy: middle.y,
+      r: 7,
+      fill: "rgba(124, 58, 237, 0.12)",
+      stroke: "#7c3aed",
+      "stroke-width": 1.8,
+    }));
+    handle.appendChild(svgEl("path", {
+      d: `M ${middle.x - 3.2} ${middle.y} H ${middle.x + 3.2} M ${middle.x} ${middle.y - 3.2} V ${middle.y + 3.2}`,
+      stroke: "#7c3aed",
+      "stroke-width": 1.7,
+      "stroke-linecap": "round",
+    }));
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      ensureEdgePoints(edge, start, end);
+      edge.points.splice(index, 0, middle);
+      edgePointDrag = { edgeId: edge.id, index };
+      render();
+    });
+    svg.appendChild(handle);
+  });
+}
+
 function editableEdgePoints(edge, start, end) {
   if (Array.isArray(edge.points) && edge.points.length) return edge.points;
   return defaultEdgeControlPoints(start, end);
@@ -883,6 +975,37 @@ function editableEdgePoints(edge, start, end) {
 function ensureEdgePoints(edge, start, end) {
   if (Array.isArray(edge.points) && edge.points.length) return;
   edge.points = defaultEdgeControlPoints(start, end);
+}
+
+function insertEdgePointAt(edge, start, end, point) {
+  ensureEdgePoints(edge, start, end);
+  const route = [start, ...edge.points, end];
+  let best = { index: 0, distance: Infinity };
+  route.slice(0, -1).forEach((segmentStart, index) => {
+    const segmentEnd = route[index + 1];
+    const distance = distanceToSegment(point, segmentStart, segmentEnd);
+    if (distance < best.distance) best = { index, distance };
+  });
+  edge.points.splice(best.index, 0, clampPoint(point));
+  selected = { kind: "edge", id: edge.id };
+  render();
+}
+
+function distanceToSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (!lengthSq) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq, 0, 1);
+  const projection = { x: start.x + t * dx, y: start.y + t * dy };
+  return Math.hypot(point.x - projection.x, point.y - projection.y);
+}
+
+function clampPoint(point) {
+  return {
+    x: clamp(point.x, 30, state.canvas.width - 30),
+    y: clamp(point.y, 130, state.canvas.height - 70),
+  };
 }
 
 function defaultEdgeControlPoints(start, end) {
@@ -907,12 +1030,49 @@ function edgeColor(edge) {
   return "var(--svg-ink)";
 }
 
-function drawEdgeLabel(svg, label, start, end) {
-  const x = (start.x + end.x) / 2;
-  const y = (start.y + end.y) / 2 - 12;
-  const w = Math.max(62, Math.min(200, weightedLength(label) * 12));
-  svg.appendChild(svgEl("rect", { x: x - w / 2, y: y - 22, width: w, height: 28, rx: 6, fill: "var(--canvas)", stroke: "var(--panel-border)", "stroke-width": 1 }));
-  appendWrappedText(svg, label, x, y - 3, w - 14, { "text-anchor": "middle", "font-size": 13, "font-weight": 800, fill: "var(--svg-ink)" }, 1);
+function markerToneName(edge) {
+  if (edge.tone === "accent") return "Accent";
+  if (edge.tone === "muted") return "Muted";
+  if (edge.tone === "soft") return "Soft";
+  return "Ink";
+}
+
+function drawEdgeLabel(svg, edge, start, end) {
+  const label = edge.label || "";
+  const position = edgeLabelPosition(edge, start, end);
+  const x = position.x;
+  const y = position.y - 12;
+  const w = Math.max(62, Math.min(220, weightedLength(label) * 12));
+  const group = svgEl("g", { class: "edge-label", "pointer-events": "none" });
+  group.appendChild(svgEl("rect", { x: x - w / 2, y: y - 22, width: w, height: 28, rx: 6, fill: "var(--canvas)", stroke: "var(--panel-border)", "stroke-width": 1 }));
+  appendWrappedText(group, label, x, y - 3, w - 14, { "text-anchor": "middle", "font-size": 13, "font-weight": 800, fill: "var(--svg-ink)" }, 1);
+  svg.appendChild(group);
+}
+
+function edgeLabelPosition(edge, start, end) {
+  const points = Array.isArray(edge.points) && edge.points.length ? edge.points : [];
+  const route = [start, ...points, end];
+  if (route.length <= 2) return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  const lengths = [];
+  let total = 0;
+  route.slice(0, -1).forEach((point, index) => {
+    const next = route[index + 1];
+    const length = Math.hypot(next.x - point.x, next.y - point.y);
+    lengths.push(length);
+    total += length;
+  });
+  let walk = total / 2;
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (walk > lengths[index]) {
+      walk -= lengths[index];
+      continue;
+    }
+    const point = route[index];
+    const next = route[index + 1];
+    const t = lengths[index] ? walk / lengths[index] : 0;
+    return { x: point.x + (next.x - point.x) * t, y: point.y + (next.y - point.y) * t };
+  }
+  return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
 }
 
 function drawNode(svg, node) {
@@ -935,9 +1095,8 @@ function drawNode(svg, node) {
     }));
   }
   drawShape(group, node, palette);
-  const textWidth = node.shape === "diamond" ? node.w * 0.58 : node.shape === "triangle" ? node.w * 0.55 : node.w - 48;
-  appendWrappedText(group, node.title, node.x + node.w / 2, node.y + node.h * 0.43, textWidth, { "text-anchor": "middle", "font-size": 17, "font-weight": 850, fill: nodeTextColor(node, "title") }, 2);
-  appendWrappedText(group, node.body, node.x + node.w / 2, node.y + node.h * 0.66, textWidth, { "text-anchor": "middle", "font-size": 13, fill: nodeTextColor(node, "body") }, 2);
+  drawNodeNumberBadge(group, node);
+  drawNodeText(group, node);
   if (isSelected && !lineMode) drawResizeHandles(group, node);
   group.addEventListener("mousedown", (event) => {
     event.preventDefault();
@@ -957,6 +1116,112 @@ function drawNode(svg, node) {
     openNodeInlineEditor(node);
   });
   svg.appendChild(group);
+}
+
+function drawNodeNumberBadge(group, node) {
+  const point = numberBadgePoint(node);
+  const badge = svgEl("g", { class: "node-number-marker edit-only", "pointer-events": "none", opacity: 0.72 });
+  badge.appendChild(svgEl("circle", {
+    cx: point.x,
+    cy: point.y,
+    r: 13,
+    fill: "var(--canvas)",
+    stroke: "var(--primary)",
+    "stroke-width": 2,
+  }));
+  badge.appendChild(svgText(String(node.number), point.x, point.y + 4.5, {
+    "text-anchor": "middle",
+    "font-size": 12,
+    "font-weight": 950,
+    fill: "var(--primary)",
+  }));
+  group.appendChild(badge);
+}
+
+function numberBadgePoint(node) {
+  if (node.shape === "circle" || node.shape === "ellipse") {
+    return { x: node.x + node.w * 0.2, y: node.y + node.h * 0.2 };
+  }
+  if (node.shape === "triangle") {
+    return { x: node.x + node.w * 0.32, y: node.y + node.h * 0.38 };
+  }
+  if (node.shape === "diamond") {
+    return { x: node.x + node.w * 0.25, y: node.y + node.h * 0.28 };
+  }
+  return {
+    x: node.x + clamp(node.w * 0.09, 14, 24),
+    y: node.y + clamp(node.h * 0.16, 14, 24),
+  };
+}
+
+function drawNodeText(group, node) {
+  if (node.shape === "brace") {
+    const label = node.title && node.title !== shapeLabels.brace ? node.title : "";
+    if (label) {
+      appendWrappedText(group, label, node.x + node.w * 0.68, node.y + node.h / 2, node.w * 0.48, {
+        "text-anchor": "middle",
+        "font-size": 13,
+        "font-weight": 820,
+        fill: nodeTextColor(node, "title"),
+      }, 2);
+    }
+    return;
+  }
+  const box = nodeTextBox(node);
+  const titleFont = fittedFontSize(node.title, box.w, node.shape === "diamond" ? 15 : 17, 12, 2);
+  const bodyFont = fittedFontSize(node.body, box.w, 12.5, 10, node.h < 88 ? 1 : 2);
+  const titleLines = wrapText(node.title || "", Math.floor(box.w / (titleFont * 0.62)), node.h < 82 ? 1 : 2);
+  const bodyLines = wrapText(node.body || "", Math.floor(box.w / (bodyFont * 0.62)), node.h < 98 ? 1 : 2);
+  const titleLineH = titleFont * 1.18;
+  const bodyLineH = bodyFont * 1.2;
+  let totalH = titleLines.length * titleLineH + (bodyLines.join("").trim() ? 8 + bodyLines.length * bodyLineH : 0);
+  let y = box.y + Math.max(6, (box.h - totalH) / 2) + titleFont * 0.85;
+  appendTextLines(group, titleLines, box.x + box.w / 2, y, titleLineH, {
+    "text-anchor": "middle",
+    "font-size": titleFont,
+    "font-weight": 850,
+    fill: nodeTextColor(node, "title"),
+  });
+  if (bodyLines.join("").trim()) {
+    y += titleLines.length * titleLineH + 8;
+    appendTextLines(group, bodyLines, box.x + box.w / 2, y, bodyLineH, {
+      "text-anchor": "middle",
+      "font-size": bodyFont,
+      fill: nodeTextColor(node, "body"),
+    });
+  }
+}
+
+function nodeTextBox(node) {
+  if (node.shape === "diamond") {
+    return { x: node.x + node.w * 0.2, y: node.y + node.h * 0.2, w: node.w * 0.6, h: node.h * 0.6 };
+  }
+  if (node.shape === "triangle") {
+    return { x: node.x + node.w * 0.22, y: node.y + node.h * 0.42, w: node.w * 0.56, h: node.h * 0.46 };
+  }
+  if (node.shape === "legend") {
+    return { x: node.x + 26, y: node.y + 18, w: node.w - 52, h: node.h - 36 };
+  }
+  return { x: node.x + 28, y: node.y + 16, w: node.w - 56, h: node.h - 32 };
+}
+
+function fittedFontSize(text, width, preferred, min, maxLines) {
+  const value = text || "";
+  let size = preferred;
+  while (size > min && weightedLength(value) > Math.floor(width / (size * 0.62)) * maxLines) {
+    size -= 0.5;
+  }
+  return size;
+}
+
+function appendTextLines(parent, lines, x, y, lineHeight, attrs) {
+  const textEl = svgText("", x, y, attrs);
+  lines.forEach((line, index) => {
+    const tspan = svgEl("tspan", { x, dy: index === 0 ? 0 : lineHeight });
+    tspan.textContent = line;
+    textEl.appendChild(tspan);
+  });
+  parent.appendChild(textEl);
 }
 
 function drawResizeHandles(group, node) {
@@ -1035,7 +1300,8 @@ function drawShape(group, node, palette) {
   }
   if (node.shape === "brace") {
     group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, fill: "transparent", stroke: "transparent" }));
-    group.appendChild(svgText("{", node.x + node.w * 0.18, node.y + node.h * 0.82, { "font-size": Math.max(64, node.h * 0.95), "font-weight": 300, fill: palette.stroke }));
+    const braceSize = clamp(Math.min(node.h * 0.98, node.w * 1.18), 20, 180);
+    group.appendChild(svgText("{", node.x + node.w * 0.12, node.y + node.h * 0.5 + braceSize * 0.34, { "font-size": braceSize, "font-weight": 300, fill: palette.stroke }));
     return;
   }
   const rx = node.shape === "pill" ? node.h / 2 : 10;
@@ -1164,11 +1430,11 @@ function onDocumentMouseMove(event) {
     if (!edge) return;
     const point = clientToSvg(event.clientX, event.clientY);
     const otherId = edgeAnchorDrag.end === "from" ? edge.to : edge.from;
-    const targetNode = nearestNodeForPoint(point, otherId) || state.nodes.find((item) => item.id === (edgeAnchorDrag.end === "from" ? edge.from : edge.to));
+    const currentId = edgeAnchorDrag.end === "from" ? edge.from : edge.to;
+    const targetNode = nearestNodeForPoint(point, otherId, 150) || state.nodes.find((item) => item.id === currentId);
     if (!targetNode) return;
     edge[edgeAnchorDrag.end] = targetNode.id;
     edge[`${edgeAnchorDrag.end}Anchor`] = pointToBoundaryAnchor(targetNode, point);
-    edge.points = [];
     render();
     return;
   }
@@ -1177,10 +1443,7 @@ function onDocumentMouseMove(event) {
     if (!edge) return;
     const point = clientToSvg(event.clientX, event.clientY);
     if (!Array.isArray(edge.points)) edge.points = [];
-    edge.points[edgePointDrag.index] = {
-      x: clamp(point.x, 30, state.canvas.width - 30),
-      y: clamp(point.y, 130, state.canvas.height - 70),
-    };
+    edge.points[edgePointDrag.index] = clampPoint(point);
     render();
     return;
   }
@@ -1273,14 +1536,14 @@ function resizeSelectedNode(node, event) {
   node.h = clamp(nextH, minH, state.canvas.height - node.y - 100);
 }
 
-function nearestNodeForPoint(point, excludeId = null) {
+function nearestNodeForPoint(point, excludeId = null, threshold = 90) {
   let best = null;
   state.nodes.forEach((node) => {
     if (node.id === excludeId) return;
     const distance = distanceToNodeRect(point, node);
     if (!best || distance < best.distance) best = { node, distance };
   });
-  return best && best.distance <= 90 ? best.node : null;
+  return best && best.distance <= threshold ? best.node : null;
 }
 
 function distanceToNodeRect(point, node) {
@@ -1389,6 +1652,8 @@ function renderLegendEditor() {
     const card = document.createElement("article");
     card.className = "node-editor-card";
     card.classList.toggle("active", selected.kind === "node" && selected.id === node.id);
+    card.title = `雙擊定位到第 ${node.number} 個圖框`;
+    card.addEventListener("dblclick", () => focusNode(node.id));
     const palette = palettes[node.palette] || palettes.process;
     const head = document.createElement("div");
     head.className = "node-editor-head";
@@ -1399,7 +1664,7 @@ function renderLegendEditor() {
     badge.title = `選取第 ${node.number} 個圖框`;
     badge.addEventListener("click", () => {
       selected = { kind: "node", id: node.id };
-      render();
+      focusNode(node.id);
     });
     const swatch = document.createElement("span");
     swatch.className = `legend-swatch ${node.shape}`;
@@ -1408,7 +1673,15 @@ function renderLegendEditor() {
     const meta = document.createElement("div");
     meta.className = "node-editor-meta";
     meta.innerHTML = `<strong>圖框 ${node.number}</strong><span>${shapeLabels[node.shape] || "圖框"} · ${paletteLabel(node.palette)}</span>`;
-    head.append(badge, swatch, meta);
+    const locate = document.createElement("button");
+    locate.className = "locate-btn";
+    locate.type = "button";
+    locate.textContent = "定位";
+    locate.addEventListener("click", (event) => {
+      event.stopPropagation();
+      focusNode(node.id);
+    });
+    head.append(badge, swatch, meta, locate);
 
     const title = editorInput("標題", node.title, (value) => {
       node.title = value || `圖框 ${node.number}`;
@@ -1447,6 +1720,107 @@ function renderLegendEditor() {
     card.append(head, title, body, controlGrid);
     els.legendEditor.appendChild(card);
   });
+}
+
+function renderEdgeEditor() {
+  if (!els.edgeEditor) return;
+  els.edgeEditor.innerHTML = "";
+  if (!state.edges.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state compact-empty";
+    empty.textContent = "目前沒有線條。左側選箭頭後點兩個圖框即可新增。";
+    els.edgeEditor.appendChild(empty);
+    return;
+  }
+  state.edges.forEach((edge, index) => {
+    const from = state.nodes.find((node) => node.id === edge.from);
+    const to = state.nodes.find((node) => node.id === edge.to);
+    const card = document.createElement("article");
+    card.className = "edge-editor-card";
+    card.classList.toggle("active", selected.kind === "edge" && selected.id === edge.id);
+    card.title = `雙擊定位到第 ${index + 1} 條線`;
+    card.addEventListener("dblclick", () => focusEdge(edge.id));
+
+    const head = document.createElement("div");
+    head.className = "edge-editor-head";
+    const badge = document.createElement("button");
+    badge.className = "edge-number-badge";
+    badge.type = "button";
+    badge.textContent = `L${index + 1}`;
+    badge.addEventListener("click", (event) => {
+      event.stopPropagation();
+      focusEdge(edge.id);
+    });
+    const meta = document.createElement("div");
+    meta.className = "edge-editor-meta";
+    meta.innerHTML = `<strong>${from?.number || "?"} → ${to?.number || "?"}</strong><span>${from?.title || "來源"} / ${to?.title || "目標"}</span>`;
+    const locate = document.createElement("button");
+    locate.className = "locate-btn";
+    locate.type = "button";
+    locate.textContent = "定位";
+    locate.addEventListener("click", (event) => {
+      event.stopPropagation();
+      focusEdge(edge.id);
+    });
+    head.append(badge, meta, locate);
+
+    const label = editorInput("文字", edge.label || "", (value) => {
+      edge.label = value;
+    }, render);
+    label.classList.add("edge-label-field");
+    const controls = document.createElement("div");
+    controls.className = "edge-editor-grid";
+    controls.append(
+      editorSelect("方向", edge.arrow, arrowLabels(), (value) => {
+        edge.arrow = value;
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorSelect("線型", edge.line, lineLabels(), (value) => {
+        edge.line = value;
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorSelect("樣式", edge.style, edgeStyleLabels(), (value) => {
+        edge.style = value;
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorNumber("粗細", edge.strokeWidth || 2, 1, 8, (value) => {
+        edge.strokeWidth = clamp(value, 1, 8);
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+    );
+    card.append(head, label, controls);
+    els.edgeEditor.appendChild(card);
+  });
+}
+
+function arrowLabels() {
+  return {
+    none: "無箭頭",
+    end: "單箭頭",
+    both: "雙箭頭",
+    start: "反向箭頭",
+  };
+}
+
+function lineLabels() {
+  return {
+    curved: "曲線",
+    straight: "直線",
+    elbow: "折線",
+  };
+}
+
+function edgeStyleLabels() {
+  return {
+    solid: "實線",
+    dashed: "虛線",
+    dotted: "點線",
+    feedback: "回饋線",
+  };
 }
 
 function editorInput(labelText, value, onInput, onChange) {
@@ -1546,23 +1920,40 @@ function setDiagramType(type, shouldRender = true) {
 function addShapeNode(shape, palette) {
   const number = state.nodes.length + 1;
   const y = Math.max(230, ...state.nodes.map((node) => node.y + node.h + 40));
+  const size = defaultShapeSize(shape);
   const node = {
     id: `node-${Date.now()}-${Math.round(Math.random() * 1000)}`,
     number,
-    title: shapeLabels[shape] || "新增圖框",
-    body: "雙擊可直接編輯",
+    title: shape === "brace" ? "" : shapeLabels[shape] || "新增圖框",
+    body: shape === "brace" ? "" : "雙擊可直接編輯",
     shape,
     palette,
     x: snap(420),
     y: snap(y),
-    w: shape === "circle" ? 140 : shape === "diamond" ? 190 : shape === "brace" ? 120 : 320,
-    h: shape === "circle" ? 140 : shape === "diamond" ? 150 : shape === "brace" ? 170 : 110,
+    w: size.w,
+    h: size.h,
   };
   state.nodes.push(node);
   selected = { kind: "node", id: node.id };
   rebuildFlow();
   ensureCanvasFits();
   render();
+}
+
+function defaultShapeSize(shape) {
+  const sizes = {
+    circle: { w: 138, h: 138 },
+    diamond: { w: 188, h: 146 },
+    ellipse: { w: 230, h: 118 },
+    triangle: { w: 188, h: 150 },
+    hexagon: { w: 260, h: 116 },
+    parallelogram: { w: 290, h: 108 },
+    document: { w: 300, h: 116 },
+    legend: { w: 270, h: 176 },
+    brace: { w: 92, h: 176 },
+    pill: { w: 300, h: 96 },
+  };
+  return sizes[shape] || { w: 320, h: 108 };
 }
 
 function autoArrange() {
@@ -1674,6 +2065,38 @@ function fitToView() {
   zoom = clamp(widthZoom, 0.35, 1);
   panOffset = { x: 0, y: 0 };
   render();
+}
+
+function focusNode(nodeId) {
+  const node = state.nodes.find((item) => item.id === nodeId);
+  if (!node) return;
+  selected = { kind: "node", id: node.id };
+  centerCanvasOnRect({ x: node.x, y: node.y, w: node.w, h: node.h });
+  render();
+}
+
+function focusEdge(edgeId) {
+  const edge = state.edges.find((item) => item.id === edgeId);
+  if (!edge) return;
+  const from = state.nodes.find((node) => node.id === edge.from);
+  const to = state.nodes.find((node) => node.id === edge.to);
+  if (!from || !to) return;
+  const start = edgeEndpointPoint(from, to, edge.fromAnchor);
+  const end = edgeEndpointPoint(to, from, edge.toAnchor);
+  const point = edgeLabelPosition(edge, start, end);
+  selected = { kind: "edge", id: edge.id };
+  centerCanvasOnRect({ x: point.x - 80, y: point.y - 50, w: 160, h: 100 });
+  render();
+}
+
+function centerCanvasOnRect(rect) {
+  const computedStyles = getComputedStyle(els.canvasScroll);
+  const padX = parseFloat(computedStyles.paddingLeft) || 0;
+  const padY = parseFloat(computedStyles.paddingTop) || 0;
+  panOffset = {
+    x: els.canvasScroll.clientWidth / 2 - padX - (rect.x + rect.w / 2) * zoom,
+    y: els.canvasScroll.clientHeight / 2 - padY - (rect.y + rect.h / 2) * zoom,
+  };
 }
 
 function togglePanel(side) {
@@ -1802,6 +2225,8 @@ function inlineSvgVars(root) {
     "var(--svg-ink)": computed.getPropertyValue("--svg-ink").trim() || "#171a1c",
     "var(--svg-muted)": computed.getPropertyValue("--svg-muted").trim() || "#58636c",
     "var(--panel-border)": computed.getPropertyValue("--panel-border").trim() || "#ccd6df",
+    "var(--primary)": computed.getPropertyValue("--primary").trim() || "#2357ff",
+    "var(--accent)": computed.getPropertyValue("--accent").trim() || "#ff7a1a",
   };
   root.querySelectorAll("*").forEach((el) => {
     ["fill", "stroke"].forEach((attr) => {
@@ -2005,22 +2430,130 @@ function summarize(items, fallback) {
 }
 
 function anchorPoint(node, target) {
+  return boundaryPointToward(node, nodeCenter(target));
+}
+
+function nodeCenter(node) {
   const cx = node.x + node.w / 2;
   const cy = node.y + node.h / 2;
-  const tx = target.x + target.w / 2;
-  const ty = target.y + target.h / 2;
-  const dx = tx - cx;
-  const dy = ty - cy;
-  if (Math.abs(dx) > Math.abs(dy)) return { x: dx > 0 ? node.x + node.w : node.x, y: cy };
-  return { x: cx, y: dy > 0 ? node.y + node.h : node.y };
+  return { x: cx, y: cy };
+}
+
+function edgeEndpointPoint(node, otherNode, anchor) {
+  if (anchor) return edgeAnchorPoint(node, anchor);
+  return boundaryPointToward(node, nodeCenter(otherNode));
 }
 
 function edgeAnchorPoint(node, anchor) {
   if (!anchor) return null;
-  return {
+  const target = {
     x: node.x + node.w * clamp(anchor.x, 0, 1),
     y: node.y + node.h * clamp(anchor.y, 0, 1),
   };
+  return boundaryPointToward(node, target);
+}
+
+function boundaryPointToward(node, target) {
+  const center = nodeCenter(node);
+  if (Math.abs(target.x - center.x) < 0.01 && Math.abs(target.y - center.y) < 0.01) {
+    return { ...center };
+  }
+  const polygon = shapePolygon(node);
+  if (polygon) return rayPolygonIntersection(center, target, polygon) || projectToRectBoundary(node, target);
+  if (node.shape === "circle" || node.shape === "ellipse") {
+    const rx = node.w / 2;
+    const ry = node.h / 2;
+    const dx = target.x - center.x;
+    const dy = target.y - center.y;
+    const scale = 1 / Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+    return { x: center.x + dx * scale, y: center.y + dy * scale };
+  }
+  return projectToRectBoundary(node, target);
+}
+
+function shapePolygon(node) {
+  const x = node.x;
+  const y = node.y;
+  const w = node.w;
+  const h = node.h;
+  if (node.shape === "diamond") return [
+    { x: x + w / 2, y },
+    { x: x + w, y: y + h / 2 },
+    { x: x + w / 2, y: y + h },
+    { x, y: y + h / 2 },
+  ];
+  if (node.shape === "triangle") return [
+    { x: x + w / 2, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+  if (node.shape === "hexagon") {
+    const cut = w * 0.16;
+    return [
+      { x: x + cut, y },
+      { x: x + w - cut, y },
+      { x: x + w, y: y + h / 2 },
+      { x: x + w - cut, y: y + h },
+      { x: x + cut, y: y + h },
+      { x, y: y + h / 2 },
+    ];
+  }
+  if (node.shape === "parallelogram") {
+    const slant = w * 0.12;
+    return [
+      { x: x + slant, y },
+      { x: x + w, y },
+      { x: x + w - slant, y: y + h },
+      { x, y: y + h },
+    ];
+  }
+  return null;
+}
+
+function rayPolygonIntersection(center, target, polygon) {
+  const far = {
+    x: center.x + (target.x - center.x) * 1000,
+    y: center.y + (target.y - center.y) * 1000,
+  };
+  let best = null;
+  polygon.forEach((point, index) => {
+    const next = polygon[(index + 1) % polygon.length];
+    const intersection = segmentIntersection(center, far, point, next);
+    if (!intersection) return;
+    if (intersection.t < -0.0001) return;
+    if (!best || intersection.t < best.t) best = intersection;
+  });
+  return best ? { x: best.x, y: best.y } : null;
+}
+
+function segmentIntersection(a, b, c, d) {
+  const r = { x: b.x - a.x, y: b.y - a.y };
+  const s = { x: d.x - c.x, y: d.y - c.y };
+  const denominator = cross(r, s);
+  if (Math.abs(denominator) < 0.00001) return null;
+  const cma = { x: c.x - a.x, y: c.y - a.y };
+  const t = cross(cma, s) / denominator;
+  const u = cross(cma, r) / denominator;
+  if (t >= 0 && u >= -0.0001 && u <= 1.0001) return { x: a.x + t * r.x, y: a.y + t * r.y, t };
+  return null;
+}
+
+function cross(a, b) {
+  return a.x * b.y - a.y * b.x;
+}
+
+function projectToRectBoundary(node, target) {
+  const center = nodeCenter(node);
+  const dx = target.x - center.x;
+  const dy = target.y - center.y;
+  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return center;
+  const halfW = node.w / 2;
+  const halfH = node.h / 2;
+  const scale = Math.min(
+    dx === 0 ? Infinity : Math.abs(halfW / dx),
+    dy === 0 ? Infinity : Math.abs(halfH / dy),
+  );
+  return { x: center.x + dx * scale, y: center.y + dy * scale };
 }
 
 function pointToBoundaryAnchor(node, point) {
@@ -2042,12 +2575,7 @@ function pointToBoundaryAnchor(node, point) {
 function edgePath(start, end, line, points = []) {
   const cleanPoints = Array.isArray(points) ? points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) : [];
   if (cleanPoints.length) {
-    if (line === "curved" && cleanPoints.length >= 2) {
-      return `M ${start.x} ${start.y} C ${cleanPoints[0].x} ${cleanPoints[0].y}, ${cleanPoints[1].x} ${cleanPoints[1].y}, ${end.x} ${end.y}`;
-    }
-    if (line === "curved" && cleanPoints.length === 1) {
-      return `M ${start.x} ${start.y} Q ${cleanPoints[0].x} ${cleanPoints[0].y}, ${end.x} ${end.y}`;
-    }
+    if (line === "curved") return smoothPath([start, ...cleanPoints, end]);
     return `M ${start.x} ${start.y} ${cleanPoints.map((point) => `L ${point.x} ${point.y}`).join(" ")} L ${end.x} ${end.y}`;
   }
   if (line === "straight") return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
@@ -2062,6 +2590,28 @@ function edgePath(start, end, line, points = []) {
   }
   const middle = start.x + (end.x - start.x) / 2;
   return `M ${start.x} ${start.y} C ${middle} ${start.y}, ${middle} ${end.y}, ${end.x} ${end.y}`;
+}
+
+function smoothPath(points) {
+  if (points.length < 2) return "";
+  if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  const path = [`M ${points[0].x} ${points[0].y}`];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const p0 = points[Math.max(0, index - 1)];
+    const p1 = points[index];
+    const p2 = points[index + 1];
+    const p3 = points[Math.min(points.length - 1, index + 2)];
+    const cp1 = {
+      x: p1.x + (p2.x - p0.x) / 6,
+      y: p1.y + (p2.y - p0.y) / 6,
+    };
+    const cp2 = {
+      x: p2.x - (p3.x - p1.x) / 6,
+      y: p2.y - (p3.y - p1.y) / 6,
+    };
+    path.push(`C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p2.x} ${p2.y}`);
+  }
+  return path.join(" ");
 }
 
 function dashArray(style) {
