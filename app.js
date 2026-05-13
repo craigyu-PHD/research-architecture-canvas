@@ -1,5 +1,5 @@
 const svgNS = "http://www.w3.org/2000/svg";
-const storageVersion = "2026-05-13-v6";
+const storageVersion = "2026-05-13-v7";
 
 const sampleText = `研究主題：AI 輔助決策下數位治理與民權保障之研究
 副標題：從文獻綜述、制度分析到政策建議的研究圖
@@ -99,6 +99,10 @@ const shapeLabels = {
   hexagon: "六角形",
   parallelogram: "資料輸入",
   document: "文件框",
+  cylinder: "資料庫",
+  table: "矩陣表",
+  callout: "註解框",
+  swimlane: "分區泳道",
   legend: "圖例框",
   brace: "花括弧",
 };
@@ -142,6 +146,7 @@ let zoom = 1;
 let panOffset = { x: 0, y: 0 };
 let snapToGrid = true;
 let lineMode = false;
+let analysisMode = "local";
 let pendingLineSource = null;
 let currentEdgePreset = { line: "curved", style: "solid", arrow: "end", strokeWidth: 2, tone: "ink" };
 let dragNode = null;
@@ -151,6 +156,7 @@ let edgePointDrag = null;
 let panDrag = null;
 let inlineEditor = null;
 let pendingExportMode = "export";
+let pendingInspectorRevealId = null;
 
 const resizeHandleDefs = [
   ["nw", 0, 0, "nwse-resize"],
@@ -188,6 +194,9 @@ function bindElements() {
     "analyzeBtn",
     "clearInputBtn",
     "diagramTypeGrid",
+    "analysisModeGrid",
+    "aiProviderSelect",
+    "aiStatusText",
     "shapeGrid",
     "arrowGrid",
     "lineModeHint",
@@ -247,6 +256,15 @@ function bindEvents() {
     const button = event.target.closest("button[data-diagram]");
     if (!button) return;
     setDiagramType(button.dataset.diagram);
+  });
+  els.analysisModeGrid.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-mode]");
+    if (!button) return;
+    setAnalysisMode(button.dataset.mode);
+  });
+  els.aiProviderSelect.addEventListener("change", () => {
+    localStorage.setItem("research-canvas-ai-provider", els.aiProviderSelect.value);
+    updateAiStatus();
   });
   els.shapeGrid.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-shape]");
@@ -329,6 +347,9 @@ function loadInitialState() {
     document.body.dataset.theme = theme;
     els.themeToggleBtn.textContent = theme === "dark" ? "正常模式" : "暗黑模式";
   }
+  setAnalysisMode(localStorage.getItem("research-canvas-ai-mode") || "local", false);
+  els.aiProviderSelect.value = localStorage.getItem("research-canvas-ai-provider") || "auto";
+  updateAiStatus();
   const stored = localStorage.getItem("research-canvas-state");
   if (stored && localStorage.getItem("research-canvas-version") === storageVersion) {
     try {
@@ -343,7 +364,7 @@ function loadInitialState() {
   resetCanvas(false);
 }
 
-function analyzeInput() {
+async function analyzeInput() {
   const text = els.researchInput.value.trim();
   if (!text) {
     showToast("請先貼上研究文字。");
@@ -352,17 +373,35 @@ function analyzeInput() {
   const started = performance.now();
   els.analyzeBtn.disabled = true;
   els.analyzeBtn.textContent = "生成中...";
-  requestAnimationFrame(() => {
-    const parsed = parseResearchText(text);
-    state = buildDiagram(parsed, state.diagramType);
+  setAiStatus("正在判斷研究結構...");
+  try {
+    if (analysisMode === "deep") {
+      const aiDiagram = await analyzeWithDeepAi(text);
+      state = stateFromAiDiagram(aiDiagram, state.diagramType);
+    } else {
+      const parsed = parseResearchText(text);
+      state = buildDiagram(parsed, state.diagramType);
+      state.meta = { engine: "local-browser-rule", textLength: text.length };
+    }
     selected = { kind: null, id: null };
     ensureCanvasFits();
-    els.analyzeBtn.disabled = false;
-    els.analyzeBtn.textContent = "生成圖稿";
     showToast(`圖稿已生成，耗時 ${Math.round(performance.now() - started)}ms。`);
     saveLocal(false);
     render();
-  });
+  } catch (error) {
+    console.error(error);
+    showToast(`深度模式失敗，已改用本地模式：${error.message || "未知錯誤"}`);
+    const parsed = parseResearchText(text);
+    state = buildDiagram(parsed, state.diagramType);
+    state.meta = { engine: "local-browser-fallback", textLength: text.length, fallbackReason: String(error.message || error) };
+    ensureCanvasFits();
+    saveLocal(false);
+    render();
+  } finally {
+    els.analyzeBtn.disabled = false;
+    els.analyzeBtn.textContent = "生成圖稿";
+    updateAiStatus();
+  }
 }
 
 function parseResearchText(text) {
@@ -414,6 +453,226 @@ function buildDiagram(parsed, diagramType) {
   base.edges = buildSmartEdges(base.nodes, diagramType);
   base.flow = base.nodes.map((node) => node.title).join(" → ");
   return base;
+}
+
+async function analyzeWithDeepAi(text) {
+  const provider = els.aiProviderSelect.value || "auto";
+  const canUseBackend = provider === "backend" || provider === "auto";
+  if (canUseBackend) {
+    try {
+      setAiStatus("嘗試呼叫本機 Python 後端...");
+      const diagram = await callBackendAnalyze(text, provider === "backend");
+      if (provider === "auto" && String(diagram?.meta?.engine || "").startsWith("local-")) {
+        throw new Error("後端沒有可用大模型");
+      }
+      return diagram;
+    } catch (error) {
+      if (provider === "backend") throw error;
+      console.warn("Backend analysis unavailable, falling back to Pollinations.", error);
+    }
+  }
+  setAiStatus("呼叫 Pollinations 大模型進行深度判斷...");
+  return analyzeWithPollinations(text);
+}
+
+async function callBackendAnalyze(text, strict = false) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, diagramType: state.diagramType, mode: "deep" }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`後端回應 ${response.status}`);
+    const payload = await response.json();
+    if (!payload.ok || !payload.diagram) throw new Error(payload.error || "後端沒有回傳圖稿");
+    return payload.diagram;
+  } catch (error) {
+    if (strict) throw error;
+    throw new Error("本機後端不可用");
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function analyzeWithPollinations(text) {
+  const source = text.length > 14000 ? await summarizeLongTextWithPollinations(text) : text;
+  const prompt = buildAiDiagramPrompt(source, state.diagramType);
+  const content = await callPollinations([
+    { role: "system", content: "You are an academic diagram architect. Return valid JSON only." },
+    { role: "user", content: prompt },
+  ], 0.18);
+  const diagram = parseAiJson(content);
+  diagram.meta = { ...(diagram.meta || {}), engine: "pollinations-openai-compatible", textLength: text.length };
+  return diagram;
+}
+
+async function summarizeLongTextWithPollinations(text) {
+  const chunks = chunkText(text, 7000).slice(0, 14);
+  const summaries = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    setAiStatus(`長文分段閱讀中 ${index + 1}/${chunks.length}...`);
+    const content = await callPollinations([
+      { role: "system", content: "You summarize academic articles for research-architecture diagrams. Return compact Traditional Chinese bullet notes." },
+      { role: "user", content: `請閱讀第 ${index + 1} 段，萃取研究問題、理論概念、資料、方法、流程、變項、因果/回饋關係與研究輸出。限制 700 字內。\n\n${chunks[index]}` },
+    ], 0.15);
+    summaries.push(`第 ${index + 1} 段摘要：\n${content}`);
+  }
+  return summaries.join("\n\n");
+}
+
+async function callPollinations(messages, temperature = 0.2) {
+  const response = await fetch("https://text.pollinations.ai/openai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "openai",
+      messages,
+      temperature,
+      response_format: { type: "json_object" },
+    }),
+  });
+  if (!response.ok) throw new Error(`Pollinations 回應 ${response.status}`);
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("大模型沒有回傳內容");
+  return content;
+}
+
+function buildAiDiagramPrompt(text, diagramType) {
+  return `請把下列研究文字轉成「學術研究架構圖」JSON。請真正判斷研究邏輯，不要只摘句子。
+
+輸出只允許 JSON，不要 Markdown。JSON schema:
+{
+  "title": "圖標題",
+  "subtitle": "副標題",
+  "diagramType": "${diagramType}",
+  "nodes": [
+    {"id":"n1","number":1,"title":"短標題","body":"說明","role":"input|theory|concept|method|analysis|validation|output|note","shape":"rounded|pill|diamond|circle|ellipse|triangle|hexagon|parallelogram|document|cylinder|table|callout|swimlane|legend|brace","palette":"process|concept|data|method|decision|output|reference|warning|node","x":120,"y":240,"w":300,"h":110}
+  ],
+  "edges": [
+    {"id":"e1","from":"n1","to":"n2","label":"關係文字","line":"curved|straight|elbow","style":"solid|dashed|dotted|feedback","arrow":"end|both|start|none","arrowStyle":"triangle|open|diamond|dot","strokeWidth":2,"curveTension":0.65}
+  ],
+  "legend": {"shape:palette":"圖例文字"},
+  "flow": "底部流程文字",
+  "suggestions": [{"level":"ok|info|warn","title":"建議標題","body":"建議內容"}]
+}
+
+排版要求:
+- 節點 5 到 10 個，不要擠成一條直線。
+- 研究架構圖要有層次、群組、回饋路徑或虛線關聯。
+- 文字要短，框內標題 12 字以內，body 30 字以內。
+- 優先使用文獻、資料、方法、檢核、輸出的學術圖語意。
+- 若原文是整篇文章，請歸納成研究問題、理論/概念、資料、方法、分析、發現/輸出，不要逐段照抄。
+
+研究文字:
+${text}`;
+}
+
+function parseAiJson(content) {
+  const cleaned = String(content || "").trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("AI 回傳不是 JSON");
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+function chunkText(text, size) {
+  const chunks = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    chunks.push(text.slice(cursor, cursor + size));
+    cursor += size;
+  }
+  return chunks;
+}
+
+function stateFromAiDiagram(diagram, fallbackType) {
+  const normalized = normalizeState({
+    diagramType: diagram.diagramType || fallbackType,
+    title: diagram.title || "AI 研究架構圖",
+    subtitle: diagram.subtitle || diagramTypes[fallbackType]?.label || "",
+    canvas: diagram.canvas || { width: 1480, height: 1280 },
+    nodes: Array.isArray(diagram.nodes) ? diagram.nodes.map((node, index) => aiNodeToStateNode(node, index)) : [],
+    edges: Array.isArray(diagram.edges) ? diagram.edges.map(aiEdgeToStateEdge) : [],
+    legend: diagram.legend || {},
+    flow: diagram.flow || "",
+    suggestions: Array.isArray(diagram.suggestions) ? diagram.suggestions : [],
+    meta: diagram.meta || {},
+  });
+  if (!normalized.nodes.length) throw new Error("AI 沒有產生節點");
+  if (!diagram.canvas) arrangeNodes(normalized.nodes, normalized.diagramType, normalized.canvas);
+  normalized.edges = normalized.edges.filter((edge) => normalized.nodes.some((node) => node.id === edge.from) && normalized.nodes.some((node) => node.id === edge.to));
+  if (!normalized.edges.length && normalized.nodes.length > 1) normalized.edges = buildSmartEdges(normalized.nodes, normalized.diagramType);
+  if (!normalized.flow) normalized.flow = normalized.nodes.map((node) => node.title).join(" → ");
+  normalized.legend = { ...buildLegendObject(normalized.nodes), ...(normalized.legend || {}) };
+  return normalized;
+}
+
+function aiNodeToStateNode(node, index) {
+  const role = node.role || node.type || "analysis";
+  const defaults = roleDefaults(role);
+  return {
+    id: node.id || `ai-node-${index + 1}`,
+    number: Number(node.number || index + 1),
+    title: node.title || `節點 ${index + 1}`,
+    body: node.body || "",
+    role,
+    shape: shapeLabels[node.shape] ? node.shape : defaults.shape,
+    palette: palettes[node.palette] ? node.palette : defaults.palette,
+    x: Number(node.x ?? 180 + (index % 3) * 360),
+    y: Number(node.y ?? 240 + Math.floor(index / 3) * 170),
+    w: Number(node.w || defaultShapeSize(node.shape || defaults.shape).w),
+    h: Number(node.h || defaultShapeSize(node.shape || defaults.shape).h),
+    borderVisible: node.borderVisible !== false,
+    borderColor: node.borderColor || "",
+    strokeWidth: Number(node.strokeWidth || 2),
+  };
+}
+
+function aiEdgeToStateEdge(edge, index) {
+  return normalizeEdge({
+    id: edge.id || `ai-edge-${index + 1}`,
+    from: edge.from,
+    to: edge.to,
+    label: edge.label || "",
+    line: edge.line || "curved",
+    style: edge.style || "solid",
+    arrow: edge.arrow || "end",
+    arrowStyle: edge.arrowStyle || "triangle",
+    strokeWidth: edge.strokeWidth || 2,
+    curveTension: edge.curveTension ?? 0.65,
+    tone: edge.tone || (edge.style === "dashed" || edge.style === "feedback" ? "accent" : "ink"),
+    points: edge.points || [],
+    fromAnchor: edge.fromAnchor || null,
+    toAnchor: edge.toAnchor || null,
+  });
+}
+
+function roleDefaults(role) {
+  const map = {
+    input: { shape: "parallelogram", palette: "data" },
+    theory: { shape: "document", palette: "reference" },
+    concept: { shape: "ellipse", palette: "concept" },
+    framework: { shape: "rounded", palette: "concept" },
+    method: { shape: "hexagon", palette: "method" },
+    analysis: { shape: "rounded", palette: "process" },
+    core: { shape: "hexagon", palette: "method" },
+    validation: { shape: "diamond", palette: "decision" },
+    output: { shape: "pill", palette: "output" },
+    note: { shape: "callout", palette: "warning" },
+  };
+  return map[role] || { shape: "rounded", palette: "process" };
+}
+
+function buildLegendObject(nodes) {
+  return nodes.reduce((legend, node) => {
+    const key = legendKey(node.shape, node.palette);
+    if (!legend[key]) legend[key] = shapeLabels[node.shape] || "圖框";
+    return legend;
+  }, {});
 }
 
 function createProfessionalTemplate(diagramType) {
@@ -475,6 +734,8 @@ function templateEdge(from, to, label, line, style, arrow) {
     points: [],
     strokeWidth: style === "feedback" ? 2.4 : 2,
     tone: style === "dashed" || style === "feedback" ? "accent" : "ink",
+    arrowStyle: "triangle",
+    curveTension: 0.65,
   };
 }
 
@@ -637,6 +898,8 @@ function smartEdge(from, to, index, label, line, style) {
     points: [],
     strokeWidth: style === "feedback" ? 2.4 : 2,
     tone: style === "dashed" || style === "feedback" ? "accent" : "ink",
+    arrowStyle: "triangle",
+    curveTension: 0.65,
   };
 }
 
@@ -776,31 +1039,48 @@ function applyCanvasTransform() {
 
 function addDefs(svg) {
   const defs = svgEl("defs");
-  [
+  const tones = [
     ["Ink", "var(--svg-ink)"],
     ["Muted", "var(--svg-muted)"],
     ["Accent", "var(--accent)"],
     ["Soft", "#2563eb"],
     ["Selected", "#f97316"],
-  ].forEach(([name, color]) => {
-    defs.appendChild(markerDef(`arrowEnd${name}`, "M2,2 L11,6 L2,10 Z", 11, 6, color));
-    defs.appendChild(markerDef(`arrowStart${name}`, "M10,2 L1,6 L10,10 Z", 1, 6, color));
+  ];
+  ["triangle", "open", "diamond", "dot"].forEach((style) => {
+    tones.forEach(([name, color]) => {
+      defs.appendChild(markerDef(`arrowEnd${pascal(style)}${name}`, "end", color, style));
+      defs.appendChild(markerDef(`arrowStart${pascal(style)}${name}`, "start", color, style));
+    });
   });
   svg.appendChild(defs);
 }
 
-function markerDef(id, path, refX, refY, color) {
+function markerDef(id, terminal, color, style) {
+  const isStart = terminal === "start";
+  const refX = isStart ? 2 : 12;
   const marker = svgEl("marker", {
     id,
-    markerWidth: 14,
-    markerHeight: 14,
+    markerWidth: 16,
+    markerHeight: 16,
     refX,
-    refY,
+    refY: 6,
     orient: "auto",
     markerUnits: "strokeWidth",
     overflow: "visible",
+    viewBox: "0 0 14 12",
   });
-  marker.appendChild(svgEl("path", { d: path, fill: color }));
+  if (style === "open") {
+    const d = isStart ? "M11,2 L3,6 L11,10" : "M3,2 L11,6 L3,10";
+    marker.appendChild(svgEl("path", { d, fill: "none", stroke: color, "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" }));
+  } else if (style === "diamond") {
+    const d = isStart ? "M11,6 L7,2 L2,6 L7,10 Z" : "M3,6 L7,2 L12,6 L7,10 Z";
+    marker.appendChild(svgEl("path", { d, fill: color, stroke: color, "stroke-width": 0.8 }));
+  } else if (style === "dot") {
+    marker.appendChild(svgEl("circle", { cx: isStart ? 4 : 10, cy: 6, r: 3.7, fill: color }));
+  } else {
+    const d = isStart ? "M12,2 L3,6 L12,10 Z" : "M2,2 L11,6 L2,10 Z";
+    marker.appendChild(svgEl("path", { d, fill: color }));
+  }
   return marker;
 }
 
@@ -822,15 +1102,22 @@ function drawTitle(svg) {
 
 function drawEdges(svg) {
   const nodesById = new Map(state.nodes.map((node) => [node.id, node]));
-  state.edges.forEach((edge) => {
+  const orderedEdges = state.edges.slice().sort((a, b) => {
+    if (selected.kind !== "edge") return 0;
+    if (a.id === selected.id) return 1;
+    if (b.id === selected.id) return -1;
+    return 0;
+  });
+  orderedEdges.forEach((edge) => {
     const from = nodesById.get(edge.from);
     const to = nodesById.get(edge.to);
     if (!from || !to) return;
     const start = edgeEndpointPoint(from, to, edge.fromAnchor);
     const end = edgeEndpointPoint(to, from, edge.toAnchor);
-    const path = edgePath(start, end, edge.line, edge.points || []);
+    const routePoints = edgeRoutePoints(edge, start, end, from, to);
+    const path = edgePath(start, end, edge.line, routePoints, edge.curveTension);
     const selectedEdge = selected.kind === "edge" && selected.id === edge.id;
-    const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": 18, cursor: "pointer" });
+    const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": selectedEdge ? 16 : 10, cursor: "pointer" });
     hit.addEventListener("mousedown", (event) => {
       event.stopPropagation();
       selected = { kind: "edge", id: edge.id };
@@ -868,10 +1155,11 @@ function drawEdges(svg) {
       "pointer-events": "none",
     };
     const markerTone = selectedEdge ? "Selected" : markerToneName(edge);
-    if (edge.arrow === "end" || edge.arrow === "both") attrs["marker-end"] = `url(#arrowEnd${markerTone})`;
-    if (edge.arrow === "start" || edge.arrow === "both") attrs["marker-start"] = `url(#arrowStart${markerTone})`;
+    const markerStyle = pascal(edge.arrowStyle || "triangle");
+    if (edge.arrow === "end" || edge.arrow === "both") attrs["marker-end"] = `url(#arrowEnd${markerStyle}${markerTone})`;
+    if (edge.arrow === "start" || edge.arrow === "both") attrs["marker-start"] = `url(#arrowStart${markerStyle}${markerTone})`;
     svg.appendChild(svgEl("path", attrs));
-    if (edge.label) drawEdgeLabel(svg, edge, start, end);
+    if (edge.label) drawEdgeLabel(svg, edge, start, end, routePoints);
     if (selectedEdge) drawEdgeEditHandles(svg, edge, start, end);
   });
 }
@@ -1037,9 +1325,9 @@ function markerToneName(edge) {
   return "Ink";
 }
 
-function drawEdgeLabel(svg, edge, start, end) {
+function drawEdgeLabel(svg, edge, start, end, routePoints = null) {
   const label = edge.label || "";
-  const position = edgeLabelPosition(edge, start, end);
+  const position = edgeLabelPosition(edge, start, end, routePoints);
   const x = position.x;
   const y = position.y - 12;
   const w = Math.max(62, Math.min(220, weightedLength(label) * 12));
@@ -1049,8 +1337,8 @@ function drawEdgeLabel(svg, edge, start, end) {
   svg.appendChild(group);
 }
 
-function edgeLabelPosition(edge, start, end) {
-  const points = Array.isArray(edge.points) && edge.points.length ? edge.points : [];
+function edgeLabelPosition(edge, start, end, routePoints = null) {
+  const points = Array.isArray(routePoints) ? routePoints : Array.isArray(edge.points) && edge.points.length ? edge.points : [];
   const route = [start, ...points, end];
   if (route.length <= 2) return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
   const lengths = [];
@@ -1073,6 +1361,52 @@ function edgeLabelPosition(edge, start, end) {
     return { x: point.x + (next.x - point.x) * t, y: point.y + (next.y - point.y) * t };
   }
   return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+}
+
+function edgeRoutePoints(edge, start, end, fromNode, toNode) {
+  const userPoints = Array.isArray(edge.points) ? edge.points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) : [];
+  if (edge.line !== "curved") return userPoints;
+  const points = [];
+  const gap = terminalGap(start, end, edge);
+  const fromControl = terminalControlPoint(fromNode, edge.fromAnchor, start, gap);
+  const toControl = terminalControlPoint(toNode, edge.toAnchor, end, gap);
+  if (fromControl) points.push(fromControl);
+  points.push(...userPoints);
+  if (toControl) points.push(toControl);
+  return removeNearDuplicatePoints(points, 8);
+}
+
+function terminalGap(start, end, edge) {
+  const distance = Math.hypot(end.x - start.x, end.y - start.y);
+  const density = clamp(Number(edge.curveTension ?? 0.65), 0.15, 1.2);
+  return clamp(distance * (0.18 + density * 0.08), 44, 150);
+}
+
+function terminalControlPoint(node, anchor, endpoint, gap) {
+  const normal = anchorNormal(anchor || pointToBoundaryAnchor(node, endpoint));
+  return { x: endpoint.x + normal.x * gap, y: endpoint.y + normal.y * gap };
+}
+
+function anchorNormal(anchor) {
+  if (!anchor) return { x: 0, y: 0 };
+  if (anchor.x <= 0.02) return { x: -1, y: 0 };
+  if (anchor.x >= 0.98) return { x: 1, y: 0 };
+  if (anchor.y <= 0.02) return { x: 0, y: -1 };
+  if (anchor.y >= 0.98) return { x: 0, y: 1 };
+  const dx = anchor.x - 0.5;
+  const dy = anchor.y - 0.5;
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: dx / length, y: dy / length };
+}
+
+function removeNearDuplicatePoints(points, minDistance) {
+  const clean = [];
+  points.forEach((point) => {
+    const previous = clean[clean.length - 1];
+    if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < minDistance) return;
+    clean.push(point);
+  });
+  return clean;
 }
 
 function drawNode(svg, node) {
@@ -1113,6 +1447,9 @@ function drawNode(svg, node) {
   group.addEventListener("dblclick", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    selected = { kind: "node", id: node.id };
+    pendingInspectorRevealId = node.id;
+    render();
     openNodeInlineEditor(node);
   });
   svg.appendChild(group);
@@ -1263,8 +1600,8 @@ function drawResizeHandles(group, node) {
 function drawShape(group, node, palette) {
   const attrs = {
     fill: palette.fill,
-    stroke: palette.stroke,
-    "stroke-width": 2,
+    stroke: node.borderVisible === false ? "transparent" : (node.borderColor || palette.stroke),
+    "stroke-width": node.borderVisible === false ? 0 : Number(node.strokeWidth || 2),
   };
   if (node.shape === "circle" || node.shape === "ellipse") {
     group.appendChild(svgEl("ellipse", { cx: node.x + node.w / 2, cy: node.y + node.h / 2, rx: node.w / 2, ry: node.h / 2, ...attrs }));
@@ -1291,6 +1628,33 @@ function drawShape(group, node, palette) {
   if (node.shape === "document") {
     const wave = 16;
     group.appendChild(svgEl("path", { d: `M ${node.x} ${node.y} H ${node.x + node.w} V ${node.y + node.h - wave} C ${node.x + node.w * 0.72} ${node.y + node.h - wave * 2}, ${node.x + node.w * 0.42} ${node.y + node.h + wave * 0.5}, ${node.x} ${node.y + node.h - wave} Z`, ...attrs }));
+    return;
+  }
+  if (node.shape === "cylinder") {
+    const cap = Math.min(28, node.h * 0.22);
+    group.appendChild(svgEl("path", { d: `M ${node.x} ${node.y + cap / 2} C ${node.x} ${node.y - cap / 2}, ${node.x + node.w} ${node.y - cap / 2}, ${node.x + node.w} ${node.y + cap / 2} V ${node.y + node.h - cap / 2} C ${node.x + node.w} ${node.y + node.h + cap / 2}, ${node.x} ${node.y + node.h + cap / 2}, ${node.x} ${node.y + node.h - cap / 2} Z`, ...attrs }));
+    group.appendChild(svgEl("ellipse", { cx: node.x + node.w / 2, cy: node.y + cap / 2, rx: node.w / 2, ry: cap / 2, fill: "none", stroke: attrs.stroke, "stroke-width": attrs["stroke-width"] }));
+    return;
+  }
+  if (node.shape === "table") {
+    group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, rx: 6, ...attrs }));
+    for (let col = 1; col < 3; col += 1) {
+      group.appendChild(svgEl("line", { x1: node.x + (node.w / 3) * col, y1: node.y, x2: node.x + (node.w / 3) * col, y2: node.y + node.h, stroke: attrs.stroke, "stroke-width": Math.max(1, attrs["stroke-width"] * 0.6) }));
+    }
+    for (let row = 1; row < 3; row += 1) {
+      group.appendChild(svgEl("line", { x1: node.x, y1: node.y + (node.h / 3) * row, x2: node.x + node.w, y2: node.y + (node.h / 3) * row, stroke: attrs.stroke, "stroke-width": Math.max(1, attrs["stroke-width"] * 0.6) }));
+    }
+    return;
+  }
+  if (node.shape === "callout") {
+    const tailX = node.x + node.w * 0.2;
+    const tailY = node.y + node.h + 24;
+    group.appendChild(svgEl("path", { d: `M ${node.x} ${node.y} H ${node.x + node.w} V ${node.y + node.h} H ${node.x + node.w * 0.32} L ${tailX} ${tailY} L ${node.x + node.w * 0.2} ${node.y + node.h} H ${node.x} Z`, ...attrs, "stroke-linejoin": "round" }));
+    return;
+  }
+  if (node.shape === "swimlane") {
+    group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, rx: 8, ...attrs }));
+    group.appendChild(svgEl("line", { x1: node.x + 86, y1: node.y, x2: node.x + 86, y2: node.y + node.h, stroke: attrs.stroke, "stroke-width": attrs["stroke-width"] }));
     return;
   }
   if (node.shape === "legend") {
@@ -1651,9 +2015,9 @@ function renderLegendEditor() {
   items.forEach((node) => {
     const card = document.createElement("article");
     card.className = "node-editor-card";
+    card.dataset.nodeId = node.id;
     card.classList.toggle("active", selected.kind === "node" && selected.id === node.id);
-    card.title = `雙擊定位到第 ${node.number} 個圖框`;
-    card.addEventListener("dblclick", () => focusNode(node.id));
+    card.title = `第 ${node.number} 個圖框`;
     const palette = palettes[node.palette] || palettes.process;
     const head = document.createElement("div");
     head.className = "node-editor-head";
@@ -1664,7 +2028,7 @@ function renderLegendEditor() {
     badge.title = `選取第 ${node.number} 個圖框`;
     badge.addEventListener("click", () => {
       selected = { kind: "node", id: node.id };
-      focusNode(node.id);
+      render();
     });
     const swatch = document.createElement("span");
     swatch.className = `legend-swatch ${node.shape}`;
@@ -1673,15 +2037,7 @@ function renderLegendEditor() {
     const meta = document.createElement("div");
     meta.className = "node-editor-meta";
     meta.innerHTML = `<strong>圖框 ${node.number}</strong><span>${shapeLabels[node.shape] || "圖框"} · ${paletteLabel(node.palette)}</span>`;
-    const locate = document.createElement("button");
-    locate.className = "locate-btn";
-    locate.type = "button";
-    locate.textContent = "定位";
-    locate.addEventListener("click", (event) => {
-      event.stopPropagation();
-      focusNode(node.id);
-    });
-    head.append(badge, swatch, meta, locate);
+    head.append(badge, swatch, meta);
 
     const title = editorInput("標題", node.title, (value) => {
       node.title = value || `圖框 ${node.number}`;
@@ -1717,9 +2073,33 @@ function renderLegendEditor() {
         render();
       }),
     );
-    card.append(head, title, body, controlGrid);
+    const styleGrid = document.createElement("div");
+    styleGrid.className = "node-editor-grid style-grid";
+    styleGrid.append(
+      editorCheckbox("邊框", node.borderVisible !== false, (checked) => {
+        node.borderVisible = checked;
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+      editorColor("框色", node.borderColor || palette.stroke, (value) => {
+        node.borderColor = value;
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+      editorNumber("線寬", node.strokeWidth || 2, 0, 10, (value) => {
+        node.strokeWidth = clamp(value, 0, 10);
+        selected = { kind: "node", id: node.id };
+        render();
+      }),
+    );
+    card.append(head, title, body, controlGrid, styleGrid);
     els.legendEditor.appendChild(card);
   });
+  if (pendingInspectorRevealId) {
+    const id = pendingInspectorRevealId;
+    pendingInspectorRevealId = null;
+    requestAnimationFrame(() => revealNodeCard(id));
+  }
 }
 
 function renderEdgeEditor() {
@@ -1781,6 +2161,11 @@ function renderEdgeEditor() {
         selected = { kind: "edge", id: edge.id };
         render();
       }),
+      editorSelect("箭頭", edge.arrowStyle || "triangle", arrowStyleLabels(), (value) => {
+        edge.arrowStyle = value;
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
       editorSelect("樣式", edge.style, edgeStyleLabels(), (value) => {
         edge.style = value;
         selected = { kind: "edge", id: edge.id };
@@ -1791,8 +2176,32 @@ function renderEdgeEditor() {
         selected = { kind: "edge", id: edge.id };
         render();
       }),
+      editorNumber("控制點", Array.isArray(edge.points) ? edge.points.length : 0, 0, 8, (value) => {
+        setEdgePointCount(edge, value);
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
     );
-    card.append(head, label, controls);
+    const routeControls = document.createElement("div");
+    routeControls.className = "edge-editor-grid edge-route-grid";
+    routeControls.append(
+      editorSelect("起點面", anchorSide(edge.fromAnchor), anchorSideLabels(), (value) => {
+        edge.fromAnchor = sideAnchor(value, edge.fromAnchor);
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorSelect("終點面", anchorSide(edge.toAnchor), anchorSideLabels(), (value) => {
+        edge.toAnchor = sideAnchor(value, edge.toAnchor);
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorRange("曲率", Number(edge.curveTension ?? 0.65), 0.15, 1.2, 0.05, (value) => {
+        edge.curveTension = value;
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+    );
+    card.append(head, label, controls, routeControls);
     els.edgeEditor.appendChild(card);
   });
 }
@@ -1814,6 +2223,15 @@ function lineLabels() {
   };
 }
 
+function arrowStyleLabels() {
+  return {
+    triangle: "三角",
+    open: "開口",
+    diamond: "菱形",
+    dot: "圓點",
+  };
+}
+
 function edgeStyleLabels() {
   return {
     solid: "實線",
@@ -1821,6 +2239,34 @@ function edgeStyleLabels() {
     dotted: "點線",
     feedback: "回饋線",
   };
+}
+
+function anchorSideLabels() {
+  return {
+    auto: "自動",
+    left: "左側",
+    right: "右側",
+    top: "上方",
+    bottom: "下方",
+  };
+}
+
+function anchorSide(anchor) {
+  if (!anchor) return "auto";
+  if (anchor.x <= 0.02) return "left";
+  if (anchor.x >= 0.98) return "right";
+  if (anchor.y <= 0.02) return "top";
+  if (anchor.y >= 0.98) return "bottom";
+  return "auto";
+}
+
+function sideAnchor(side, previous = null) {
+  const t = previous || { x: 0.5, y: 0.5 };
+  if (side === "left") return { x: 0, y: clamp(t.y ?? 0.5, 0.08, 0.92) };
+  if (side === "right") return { x: 1, y: clamp(t.y ?? 0.5, 0.08, 0.92) };
+  if (side === "top") return { x: clamp(t.x ?? 0.5, 0.08, 0.92), y: 0 };
+  if (side === "bottom") return { x: clamp(t.x ?? 0.5, 0.08, 0.92), y: 1 };
+  return null;
 }
 
 function editorInput(labelText, value, onInput, onChange) {
@@ -1884,6 +2330,63 @@ function editorNumber(labelText, value, min, max, onChange) {
   return label;
 }
 
+function editorRange(labelText, value, min, max, step, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field range-field";
+  const caption = document.createElement("span");
+  caption.textContent = `${labelText} ${Number(value).toFixed(2)}`;
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = min;
+  input.max = max;
+  input.step = step;
+  input.value = value;
+  input.addEventListener("input", () => {
+    const next = Number(input.value);
+    caption.textContent = `${labelText} ${next.toFixed(2)}`;
+    onChange(next);
+  });
+  label.append(caption, input);
+  return label;
+}
+
+function editorColor(labelText, value, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field color-field";
+  label.textContent = labelText;
+  const input = document.createElement("input");
+  input.type = "color";
+  input.value = normalizeColor(value);
+  input.addEventListener("input", () => onChange(input.value));
+  label.appendChild(input);
+  return label;
+}
+
+function editorCheckbox(labelText, checked, onChange) {
+  const label = document.createElement("label");
+  label.className = "node-editor-field check-field";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.addEventListener("change", () => onChange(input.checked));
+  label.append(input, document.createTextNode(labelText));
+  return label;
+}
+
+function normalizeColor(value) {
+  if (/^#[0-9a-f]{6}$/i.test(value || "")) return value;
+  return "#2563eb";
+}
+
+function revealNodeCard(nodeId) {
+  const panel = els.legendEditor.closest(".inspector-panel");
+  const card = els.legendEditor.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+  if (!panel || !card) return;
+  panel.scrollTop = Math.max(0, card.offsetTop - panel.offsetTop - 76);
+  card.classList.add("pulse");
+  window.setTimeout(() => card.classList.remove("pulse"), 1100);
+}
+
 function paletteLabels() {
   return {
     process: "流程藍",
@@ -1915,6 +2418,30 @@ function setDiagramType(type, shouldRender = true) {
   });
   els.analyzeBtn.title = diagramTypes[state.diagramType].flowHint;
   if (shouldRender) render();
+}
+
+function setAnalysisMode(mode, shouldPersist = true) {
+  analysisMode = mode === "deep" ? "deep" : "local";
+  els.analysisModeGrid.querySelectorAll("button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === analysisMode);
+  });
+  if (shouldPersist) localStorage.setItem("research-canvas-ai-mode", analysisMode);
+  updateAiStatus();
+}
+
+function setAiStatus(message) {
+  if (els.aiStatusText) els.aiStatusText.textContent = message;
+}
+
+function updateAiStatus() {
+  if (!els.aiStatusText) return;
+  if (analysisMode === "local") {
+    setAiStatus("目前使用快速本地模式，不會送出文字。");
+    return;
+  }
+  const provider = els.aiProviderSelect?.value || "auto";
+  const label = provider === "pollinations" ? "Pollinations 免金鑰 API" : provider === "backend" ? "本機 Python 後端" : "本機後端優先，失敗後改用 Pollinations";
+  setAiStatus(`目前使用深度大模型模式：${label}。`);
 }
 
 function addShapeNode(shape, palette) {
@@ -1949,6 +2476,10 @@ function defaultShapeSize(shape) {
     hexagon: { w: 260, h: 116 },
     parallelogram: { w: 290, h: 108 },
     document: { w: 300, h: 116 },
+    cylinder: { w: 250, h: 126 },
+    table: { w: 310, h: 126 },
+    callout: { w: 280, h: 104 },
+    swimlane: { w: 360, h: 150 },
     legend: { w: 270, h: 176 },
     brace: { w: 92, h: 176 },
     pill: { w: 300, h: 96 },
@@ -1995,6 +2526,24 @@ function selectedNode() {
 
 function selectedEdge() {
   return state.edges.find((edge) => edge.id === selected.id) || null;
+}
+
+function setEdgePointCount(edge, count) {
+  const nextCount = clamp(Math.round(Number(count) || 0), 0, 8);
+  const from = state.nodes.find((node) => node.id === edge.from);
+  const to = state.nodes.find((node) => node.id === edge.to);
+  if (!from || !to) return;
+  const start = edgeEndpointPoint(from, to, edge.fromAnchor);
+  const end = edgeEndpointPoint(to, from, edge.toAnchor);
+  const current = Array.isArray(edge.points) ? edge.points.slice(0, nextCount) : [];
+  while (current.length < nextCount) {
+    const t = (current.length + 1) / (nextCount + 1);
+    current.push({
+      x: start.x + (end.x - start.x) * t,
+      y: start.y + (end.y - start.y) * t + (current.length % 2 ? -34 : 34),
+    });
+  }
+  edge.points = current.map(clampPoint);
 }
 
 function buildLegendItems() {
@@ -2329,6 +2878,7 @@ function normalizeState(input) {
     legend: input.legend && typeof input.legend === "object" ? input.legend : {},
     flow: input.flow || "",
     suggestions: Array.isArray(input.suggestions) ? input.suggestions.slice(0, 3) : [],
+    meta: input.meta && typeof input.meta === "object" ? input.meta : {},
   };
 }
 
@@ -2344,6 +2894,9 @@ function normalizeNode(node, index) {
     y: Number(node.y || 240 + index * 140),
     w: Number(node.w || 320),
     h: Number(node.h || 110),
+    borderVisible: node.borderVisible !== false,
+    borderColor: node.borderColor || "",
+    strokeWidth: Number(node.strokeWidth || 2),
   };
 }
 
@@ -2356,10 +2909,12 @@ function normalizeEdge(edge) {
     line: edge.line || "curved",
     style: edge.style || "solid",
     arrow: edge.arrow || "end",
+    arrowStyle: edge.arrowStyle || "triangle",
     fromAnchor: normalizeAnchor(edge.fromAnchor),
     toAnchor: normalizeAnchor(edge.toAnchor),
     points: Array.isArray(edge.points) ? edge.points.map(normalizePoint).filter(Boolean) : [],
     strokeWidth: Number(edge.strokeWidth || 2),
+    curveTension: Number(edge.curveTension ?? 0.65),
     tone: edge.tone || "ink",
   };
 }
@@ -2572,10 +3127,10 @@ function pointToBoundaryAnchor(node, point) {
   return { x: localX, y: 1 };
 }
 
-function edgePath(start, end, line, points = []) {
+function edgePath(start, end, line, points = [], curveTension = 0.65) {
   const cleanPoints = Array.isArray(points) ? points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) : [];
   if (cleanPoints.length) {
-    if (line === "curved") return smoothPath([start, ...cleanPoints, end]);
+    if (line === "curved") return smoothPath([start, ...cleanPoints, end], curveTension);
     return `M ${start.x} ${start.y} ${cleanPoints.map((point) => `L ${point.x} ${point.y}`).join(" ")} L ${end.x} ${end.y}`;
   }
   if (line === "straight") return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
@@ -2592,9 +3147,10 @@ function edgePath(start, end, line, points = []) {
   return `M ${start.x} ${start.y} C ${middle} ${start.y}, ${middle} ${end.y}, ${end.x} ${end.y}`;
 }
 
-function smoothPath(points) {
+function smoothPath(points, tension = 0.65) {
   if (points.length < 2) return "";
   if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  const factor = clamp(Number(tension) || 0.65, 0.15, 1.2) / 3.9;
   const path = [`M ${points[0].x} ${points[0].y}`];
   for (let index = 0; index < points.length - 1; index += 1) {
     const p0 = points[Math.max(0, index - 1)];
@@ -2602,12 +3158,12 @@ function smoothPath(points) {
     const p2 = points[index + 1];
     const p3 = points[Math.min(points.length - 1, index + 2)];
     const cp1 = {
-      x: p1.x + (p2.x - p0.x) / 6,
-      y: p1.y + (p2.y - p0.y) / 6,
+      x: p1.x + (p2.x - p0.x) * factor,
+      y: p1.y + (p2.y - p0.y) * factor,
     };
     const cp2 = {
-      x: p2.x - (p3.x - p1.x) / 6,
-      y: p2.y - (p3.y - p1.y) / 6,
+      x: p2.x - (p3.x - p1.x) * factor,
+      y: p2.y - (p3.y - p1.y) * factor,
     };
     path.push(`C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p2.x} ${p2.y}`);
   }
@@ -2694,6 +3250,10 @@ function compact(value) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function pascal(value) {
+  return String(value || "triangle").replace(/(^|[-_])([a-z])/g, (_match, _prefix, char) => char.toUpperCase());
 }
 
 function snap(value) {

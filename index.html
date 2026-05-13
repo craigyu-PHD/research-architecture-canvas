@@ -65,10 +65,22 @@
           <div class="section-head">
             <div>
               <h2>AI 解析生成</h2>
-              <p>依照上方文字與圖表類型，先生成一版可編輯的畫布草稿。</p>
+              <p>先選判斷模式，再依照文字與圖表類型生成可編輯草稿。</p>
             </div>
           </div>
+          <div class="analysis-mode-grid" id="analysisModeGrid" role="group" aria-label="AI 判斷模式">
+            <button class="active" data-mode="local" type="button"><strong>快速本地</strong><span>不用網路，適合短文字初稿</span></button>
+            <button data-mode="deep" type="button"><strong>深度大模型</strong><span>適合整篇文章與複雜邏輯</span></button>
+          </div>
+          <label class="inline-field ai-provider-field">深度模式來源
+            <select id="aiProviderSelect">
+              <option value="auto">自動：本機後端優先</option>
+              <option value="pollinations">免金鑰：Pollinations</option>
+              <option value="backend">本機 Python 後端</option>
+            </select>
+          </label>
           <button id="analyzeBtn" class="primary-btn wide" type="button">生成圖稿</button>
+          <p id="aiStatusText" class="hint">目前使用快速本地模式。</p>
         </section>
 
         <section class="panel-section">
@@ -84,6 +96,10 @@
             <button data-shape="hexagon" data-palette="method" type="button"><span class="shape-sample hexagon"></span>方法六角</button>
             <button data-shape="parallelogram" data-palette="data" type="button"><span class="shape-sample parallelogram"></span>資料輸入</button>
             <button data-shape="document" data-palette="reference" type="button"><span class="shape-sample document"></span>文件/文獻</button>
+            <button data-shape="cylinder" data-palette="data" type="button"><span class="shape-sample cylinder"></span>資料庫</button>
+            <button data-shape="table" data-palette="reference" type="button"><span class="shape-sample table"></span>矩陣表</button>
+            <button data-shape="callout" data-palette="warning" type="button"><span class="shape-sample callout"></span>註解框</button>
+            <button data-shape="swimlane" data-palette="process" type="button"><span class="shape-sample swimlane"></span>分區泳道</button>
             <button data-shape="legend" data-palette="reference" type="button"><span class="shape-sample legend"></span>圖例框</button>
             <button data-shape="brace" data-palette="method" type="button"><span class="shape-sample brace"></span>花括弧</button>
           </div>
@@ -140,7 +156,7 @@
           <div class="section-head">
             <div>
               <h2>圖框編輯</h2>
-              <p>依編號列出圖框。雙擊卡片或按定位可跳到畫布上的對應圖框。</p>
+              <p>依編號列出圖框。雙擊畫布上的圖框時，這裡會自動跳到對應卡片。</p>
             </div>
           </div>
           <div id="legendEditor" class="legend-editor"></div>

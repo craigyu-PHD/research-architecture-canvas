@@ -397,56 +397,152 @@ def build_suggestions(parsed: ParsedSections, nodes: List[Dict[str, Any]]) -> Li
     return suggestions
 
 
-def maybe_call_external_llm(text: str) -> Optional[Dict[str, Any]]:
-    """Optional OpenAI-compatible adapter.
+def maybe_call_external_llm(text: str, diagram_type: str = "flowchart", mode: str = "local") -> Optional[Dict[str, Any]]:
+    """Optional LLM adapter.
 
-    Set RESEARCH_CANVAS_LLM_URL, RESEARCH_CANVAS_LLM_API_KEY, and
-    RESEARCH_CANVAS_LLM_MODEL to activate it.  The response must be JSON in the
-    same shape as build_diagram; otherwise the local engine is used.
+    Two routes are supported:
+    - Custom OpenAI-compatible endpoint through environment variables.
+    - Pollinations OpenAI-compatible endpoint in deep mode, no API key required
+      for basic usage at the time this app was updated.
     """
 
     base_url = os.environ.get("RESEARCH_CANVAS_LLM_URL")
-    api_key = os.environ.get("RESEARCH_CANVAS_LLM_API_KEY")
-    model = os.environ.get("RESEARCH_CANVAS_LLM_MODEL", "local-model")
-    if not base_url or not api_key:
+    api_key = os.environ.get("RESEARCH_CANVAS_LLM_API_KEY", "")
+    model = os.environ.get("RESEARCH_CANVAS_LLM_MODEL", "openai")
+    if not base_url and mode == "deep":
+        base_url = "https://text.pollinations.ai/openai"
+    if not base_url:
         return None
 
-    prompt = (
-        "Analyze the research text and return strict JSON for a research architecture diagram. "
-        "Use keys: title, subtitle, nodes, edges, parameters, notes, flow, suggestions. "
-        "Each node needs id,type,number,x,y,w,h,title,body,children.\n\n"
-        f"Research text:\n{text}"
-    )
+    source = text
+    if mode == "deep" and len(text) > 14000:
+        summaries = []
+        chunks = chunk_text(text, 7000)[:14]
+        for index, chunk in enumerate(chunks, 1):
+            summary_prompt = (
+                f"請閱讀第 {index} 段，萃取研究問題、理論概念、資料、方法、流程、變項、因果或回饋關係與研究輸出。"
+                "請用繁體中文條列，700 字內。\n\n"
+                + chunk
+            )
+            try:
+                summary = call_openai_compatible(base_url, api_key, model, [
+                    {"role": "system", "content": "You summarize academic articles for diagram generation."},
+                    {"role": "user", "content": summary_prompt},
+                ], expect_json=False)
+            except RuntimeError:
+                return None
+            summaries.append(f"第 {index} 段摘要：\n{summary}")
+        source = "\n\n".join(summaries)
+
+    prompt = build_llm_diagram_prompt(source, diagram_type)
+    try:
+        content = call_openai_compatible(base_url, api_key, model, [
+            {"role": "system", "content": "You are an academic diagram architect. Return valid JSON only."},
+            {"role": "user", "content": prompt},
+        ], expect_json=True)
+    except RuntimeError:
+        return None
+    try:
+        result = json.loads(extract_json_object(content))
+    except json.JSONDecodeError:
+        return None
+    result.setdefault("meta", {})
+    result["meta"]["engine"] = "external-llm"
+    result["meta"]["provider"] = "pollinations" if "pollinations.ai" in base_url else "custom-openai-compatible"
+    return result
+
+
+def build_llm_diagram_prompt(text: str, diagram_type: str) -> str:
+    return f"""請把下列研究文字轉成「學術研究架構圖」JSON。請真正判斷研究邏輯，不要只摘句子。
+
+輸出只允許 JSON，不要 Markdown。JSON schema:
+{{
+  "title": "圖標題",
+  "subtitle": "副標題",
+  "diagramType": "{diagram_type}",
+  "nodes": [
+    {{"id":"n1","number":1,"title":"短標題","body":"說明","role":"input|theory|concept|method|analysis|validation|output|note","shape":"rounded|pill|diamond|circle|ellipse|triangle|hexagon|parallelogram|document|cylinder|table|callout|swimlane|legend|brace","palette":"process|concept|data|method|decision|output|reference|warning|node","x":120,"y":240,"w":300,"h":110}}
+  ],
+  "edges": [
+    {{"id":"e1","from":"n1","to":"n2","label":"關係文字","line":"curved|straight|elbow","style":"solid|dashed|dotted|feedback","arrow":"end|both|start|none","arrowStyle":"triangle|open|diamond|dot","strokeWidth":2,"curveTension":0.65}}
+  ],
+  "legend": {{"shape:palette":"圖例文字"}},
+  "flow": "底部流程文字",
+  "suggestions": [{{"level":"ok|info|warn","title":"建議標題","body":"建議內容"}}]
+}}
+
+排版要求:
+- 節點 5 到 10 個，不要擠成一條直線。
+- 研究架構圖要有層次、群組、回饋路徑或虛線關聯。
+- 框內標題 12 字以內，body 30 字以內。
+- 若原文是整篇文章，請歸納成研究問題、理論/概念、資料、方法、分析、發現/輸出，不要逐段照抄。
+
+研究文字:
+{text}"""
+
+
+def call_openai_compatible(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: List[Dict[str, str]],
+    expect_json: bool,
+) -> str:
+    endpoint = openai_compatible_endpoint(base_url)
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": "You produce valid JSON only."},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": messages,
         "temperature": 0.2,
     }
+    if expect_json:
+        payload["response_format"] = {"type": "json_object"}
+    headers = {"Content-Type": "application/json", "User-Agent": "research-canvas/0.2"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(
-        base_url.rstrip("/") + "/v1/chat/completions",
+        endpoint,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers=headers,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=45) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        return None
+    except Exception as exc:
+        raise RuntimeError(f"LLM request failed: {exc}") from exc
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        return None
+    if not content:
+        raise RuntimeError("LLM returned empty content")
+    return content
 
 
-def analyze_text(text: str) -> Dict[str, Any]:
-    llm_diagram = maybe_call_external_llm(text)
+def openai_compatible_endpoint(base_url: str) -> str:
+    cleaned = base_url.rstrip("/")
+    if cleaned.endswith("/chat/completions") or cleaned.endswith("/openai"):
+        return cleaned
+    if cleaned.endswith("/v1"):
+        return cleaned + "/chat/completions"
+    return cleaned + "/v1/chat/completions"
+
+
+def extract_json_object(content: str) -> str:
+    cleaned = content.strip()
+    cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"```$", "", cleaned).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise json.JSONDecodeError("No JSON object found", cleaned, 0)
+    return cleaned[start : end + 1]
+
+
+def chunk_text(text: str, size: int) -> List[str]:
+    return [text[index : index + size] for index in range(0, len(text), size)]
+
+
+def analyze_text(text: str, diagram_type: str = "flowchart", mode: str = "local") -> Dict[str, Any]:
+    llm_diagram = maybe_call_external_llm(text, diagram_type, mode)
     if llm_diagram and "nodes" in llm_diagram:
-        llm_diagram.setdefault("meta", {})["engine"] = "external-llm"
         return llm_diagram
     parsed = parse_sections(text)
     return build_diagram(parsed)
@@ -490,10 +586,12 @@ class ResearchCanvasHandler(SimpleHTTPRequestHandler):
             raw = self.rfile.read(content_length)
             payload = json.loads(raw.decode("utf-8") or "{}")
             text = str(payload.get("text", "")).strip()
+            diagram_type = str(payload.get("diagramType", "flowchart")).strip() or "flowchart"
+            mode = str(payload.get("mode", "local")).strip() or "local"
             if not text:
                 self.end_json(400, {"ok": False, "error": "請先貼上研究流程或研究架構文字。"})
                 return
-            diagram = analyze_text(text)
+            diagram = analyze_text(text, diagram_type, mode)
             self.end_json(200, {"ok": True, "diagram": diagram})
         except Exception as exc:  # pragma: no cover - defensive API boundary
             self.end_json(500, {"ok": False, "error": str(exc)})

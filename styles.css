@@ -120,6 +120,7 @@ button {
 .icon-btn,
 .sample-btn,
 .diagram-type-grid button,
+.analysis-mode-grid button,
 .shape-grid button,
 .arrow-grid button {
   min-height: 34px;
@@ -194,6 +195,7 @@ body[data-theme="dark"] .ghost-btn.vivid {
 .ghost-btn:hover,
 .icon-btn:hover,
 .diagram-type-grid button:hover,
+.analysis-mode-grid button:hover,
 .shape-grid button:hover,
 .arrow-grid button:hover,
 .file-label:hover {
@@ -438,17 +440,20 @@ select:focus {
 }
 
 .diagram-type-grid,
+.analysis-mode-grid,
 .shape-grid,
 .arrow-grid {
   display: grid;
   gap: 8px;
 }
 
-.diagram-type-grid {
+.diagram-type-grid,
+.analysis-mode-grid {
   grid-template-columns: 1fr 1fr;
 }
 
-.diagram-type-grid button {
+.diagram-type-grid button,
+.analysis-mode-grid button {
   min-height: 64px;
   padding: 9px;
   border: 1px solid var(--panel-border);
@@ -457,25 +462,42 @@ select:focus {
   text-align: left;
 }
 
-.diagram-type-grid button.active {
+.analysis-mode-grid {
+  margin-bottom: 10px;
+}
+
+.analysis-mode-grid button {
+  min-height: 58px;
+}
+
+.diagram-type-grid button.active,
+.analysis-mode-grid button.active {
   border-color: var(--primary);
   background: #e8efff;
 }
 
-body[data-theme="dark"] .diagram-type-grid button.active {
+body[data-theme="dark"] .diagram-type-grid button.active,
+body[data-theme="dark"] .analysis-mode-grid button.active {
   background: #1d2c54;
 }
 
 .diagram-type-grid strong,
-.diagram-type-grid span {
+.diagram-type-grid span,
+.analysis-mode-grid strong,
+.analysis-mode-grid span {
   display: block;
 }
 
-.diagram-type-grid span {
+.diagram-type-grid span,
+.analysis-mode-grid span {
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.ai-provider-field {
+  margin: 0 0 10px;
 }
 
 .shape-grid {
@@ -615,6 +637,41 @@ body[data-theme="dark"] .arrow-grid button.active {
 
 .shape-sample.brace::before {
   content: "{";
+}
+
+.shape-sample.cylinder {
+  width: 30px;
+  height: 25px;
+  border-radius: 50% / 20%;
+  border-color: #0891b2;
+  background: #e8fbff;
+}
+
+.shape-sample.table {
+  width: 30px;
+  height: 24px;
+  border-color: #6b8a20;
+  background:
+    linear-gradient(90deg, transparent 32%, #6b8a20 33% 36%, transparent 37% 64%, #6b8a20 65% 68%, transparent 69%),
+    linear-gradient(0deg, transparent 32%, #6b8a20 33% 36%, transparent 37% 64%, #6b8a20 65% 68%, transparent 69%),
+    #f1f5e8;
+}
+
+.shape-sample.callout {
+  width: 30px;
+  height: 22px;
+  border-color: #d97706;
+  background: #fff8d8;
+  clip-path: polygon(0 0, 100% 0, 100% 76%, 38% 76%, 20% 100%, 23% 76%, 0 76%);
+}
+
+.shape-sample.swimlane {
+  width: 34px;
+  height: 24px;
+  border-color: #2563eb;
+  background:
+    linear-gradient(90deg, transparent 28%, #2563eb 29% 34%, transparent 35%),
+    #e9f2ff;
 }
 
 .line-preview {
@@ -823,7 +880,7 @@ body[data-theme="dark"] .arrow-grid button.active {
 
 .node-editor-head {
   display: grid;
-  grid-template-columns: 28px 30px minmax(0, 1fr) auto;
+  grid-template-columns: 28px 30px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
 }
@@ -889,6 +946,47 @@ body[data-theme="dark"] .arrow-grid button.active {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
+}
+
+.node-editor-grid.style-grid {
+  grid-template-columns: 58px minmax(0, 1fr) 58px;
+}
+
+.color-field input[type="color"] {
+  min-height: 24px;
+  padding: 2px;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+}
+
+.check-field input {
+  width: 14px;
+  min-height: 14px;
+  accent-color: var(--primary);
+}
+
+.range-field {
+  grid-column: span 2;
+}
+
+.range-field input[type="range"] {
+  padding: 0;
+  min-height: 18px;
+}
+
+.node-editor-card.pulse {
+  animation: inspectorPulse 0.9s ease;
+}
+
+@keyframes inspectorPulse {
+  0% { box-shadow: 0 0 0 0 rgba(35, 87, 255, 0.28); }
+  70% { box-shadow: 0 0 0 8px rgba(35, 87, 255, 0); }
+  100% { box-shadow: none; }
 }
 
 .legend-swatch {
@@ -1031,6 +1129,27 @@ body[data-theme="dark"] .edge-number-badge {
 
 .legend-swatch.document {
   border-radius: 3px 3px 8px 3px;
+}
+
+.legend-swatch.cylinder {
+  border-radius: 50% / 20%;
+}
+
+.legend-swatch.table {
+  background:
+    linear-gradient(90deg, transparent 32%, var(--swatch-stroke) 33% 36%, transparent 37% 64%, var(--swatch-stroke) 65% 68%, transparent 69%),
+    linear-gradient(0deg, transparent 32%, var(--swatch-stroke) 33% 36%, transparent 37% 64%, var(--swatch-stroke) 65% 68%, transparent 69%),
+    var(--swatch-fill);
+}
+
+.legend-swatch.callout {
+  clip-path: polygon(0 0, 100% 0, 100% 76%, 38% 76%, 20% 100%, 23% 76%, 0 76%);
+}
+
+.legend-swatch.swimlane {
+  background:
+    linear-gradient(90deg, transparent 28%, var(--swatch-stroke) 29% 34%, transparent 35%),
+    var(--swatch-fill);
 }
 
 .legend-swatch.legend {
