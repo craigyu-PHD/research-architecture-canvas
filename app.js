@@ -1,5 +1,5 @@
 const svgNS = "http://www.w3.org/2000/svg";
-const storageVersion = "2026-05-13-v7";
+const storageVersion = "2026-05-13-v8";
 
 const sampleText = `研究主題：AI 輔助決策下數位治理與民權保障之研究
 副標題：從文獻綜述、制度分析到政策建議的研究圖
@@ -99,6 +99,7 @@ const shapeLabels = {
   hexagon: "六角形",
   parallelogram: "資料輸入",
   document: "文件框",
+  subroutine: "雙線模組",
   cylinder: "資料庫",
   table: "矩陣表",
   callout: "註解框",
@@ -148,7 +149,7 @@ let snapToGrid = true;
 let lineMode = false;
 let analysisMode = "local";
 let pendingLineSource = null;
-let currentEdgePreset = { line: "curved", style: "solid", arrow: "end", strokeWidth: 2, tone: "ink" };
+let currentEdgePreset = { line: "curved", style: "solid", arrow: "end", arrowStyle: "triangle", strokeWidth: 2, tone: "ink", dashLength: 8, dashGap: 7, autoRoute: true };
 let dragNode = null;
 let resizeDrag = null;
 let edgeAnchorDrag = null;
@@ -168,6 +169,14 @@ const resizeHandleDefs = [
   ["sw", 0, 1, "nesw-resize"],
   ["w", 0, 0.5, "ew-resize"],
 ];
+
+const academicFigureStyleGuide = `請固定參考使用者一開始提供的 ViT / Encoder Transformer 學術圖鑑風格，將它轉成以下文字化設計標準：
+1. 白色論文圖底，黑色高權重標題，副標題清楚但不搶主圖。
+2. 主流程採中心對齊或清楚的分層網格，圖框間距一致，避免小畫家式任意散落。
+3. 色彩以淡色填底加高對比邊框：藍=嵌入/輸入，紅=注意力/判斷，橙=交叉或方法補充，綠=MLP/輸出，灰=規範/殘差/檢核。
+4. 圖框文字短而可讀，標題 12 字以內，補充文字 30 字以內，寧可增加節點也不要塞爆單一框。
+5. 線條要有語意：主流程用實線箭頭，補充關係用虛線，回饋修正用曲線或雙向箭頭；箭頭應指向圖框邊界中心或最合理的側邊。
+6. 視覺上要像正式論文/方法圖：一致線寬、穩定圓角、乾淨圖例、底部 Flow 條，以及必要的 Notes/Legend，而不是裝飾性模板。`;
 
 const els = {};
 
@@ -278,8 +287,12 @@ function bindEvents() {
       line: button.dataset.line,
       style: button.dataset.style,
       arrow: button.dataset.arrow,
+      arrowStyle: button.dataset.arrowStyle || "triangle",
       strokeWidth: Number(button.dataset.width || 2),
       tone: button.dataset.tone || "ink",
+      dashLength: Number(button.dataset.dashLength || 8),
+      dashGap: Number(button.dataset.dashGap || 7),
+      autoRoute: true,
     };
     lineMode = true;
     pendingLineSource = null;
@@ -544,16 +557,19 @@ async function callPollinations(messages, temperature = 0.2) {
 function buildAiDiagramPrompt(text, diagramType) {
   return `請把下列研究文字轉成「學術研究架構圖」JSON。請真正判斷研究邏輯，不要只摘句子。
 
+參考圖鑑風格標準:
+${academicFigureStyleGuide}
+
 輸出只允許 JSON，不要 Markdown。JSON schema:
 {
   "title": "圖標題",
   "subtitle": "副標題",
   "diagramType": "${diagramType}",
   "nodes": [
-    {"id":"n1","number":1,"title":"短標題","body":"說明","role":"input|theory|concept|method|analysis|validation|output|note","shape":"rounded|pill|diamond|circle|ellipse|triangle|hexagon|parallelogram|document|cylinder|table|callout|swimlane|legend|brace","palette":"process|concept|data|method|decision|output|reference|warning|node","x":120,"y":240,"w":300,"h":110}
+    {"id":"n1","number":1,"title":"短標題","body":"說明","role":"input|theory|concept|method|analysis|validation|output|note","shape":"rounded|pill|diamond|circle|ellipse|triangle|hexagon|parallelogram|document|subroutine|cylinder|table|callout|swimlane|legend|brace","palette":"process|concept|data|method|decision|output|reference|warning|node","x":120,"y":240,"w":300,"h":110}
   ],
   "edges": [
-    {"id":"e1","from":"n1","to":"n2","label":"關係文字","line":"curved|straight|elbow","style":"solid|dashed|dotted|feedback","arrow":"end|both|start|none","arrowStyle":"triangle|open|diamond|dot","strokeWidth":2,"curveTension":0.65}
+    {"id":"e1","from":"n1","to":"n2","label":"關係文字","line":"curved|straight|elbow","style":"solid|dashed|dotted|feedback","arrow":"end|both|start|none","arrowStyle":"triangle|open|diamond|dot","strokeWidth":2,"dashLength":8,"dashGap":7,"curveTension":0.65,"autoRoute":true}
   ],
   "legend": {"shape:palette":"圖例文字"},
   "flow": "底部流程文字",
@@ -563,6 +579,8 @@ function buildAiDiagramPrompt(text, diagramType) {
 排版要求:
 - 節點 5 到 10 個，不要擠成一條直線。
 - 研究架構圖要有層次、群組、回饋路徑或虛線關聯。
+- 請輸出接近範例圖鑑的專業論文圖：有主圖、圖例、底部 Flow，線條端點要貼到圖框合理側邊。
+- 菱形只用於判斷或檢核，尺寸請接近正方形，避免文字超出。
 - 文字要短，框內標題 12 字以內，body 30 字以內。
 - 優先使用文獻、資料、方法、檢核、輸出的學術圖語意。
 - 若原文是整篇文章，請歸納成研究問題、理論/概念、資料、方法、分析、發現/輸出，不要逐段照抄。
@@ -643,7 +661,10 @@ function aiEdgeToStateEdge(edge, index) {
     arrow: edge.arrow || "end",
     arrowStyle: edge.arrowStyle || "triangle",
     strokeWidth: edge.strokeWidth || 2,
+    dashLength: edge.dashLength || 8,
+    dashGap: edge.dashGap || 7,
     curveTension: edge.curveTension ?? 0.65,
+    autoRoute: edge.autoRoute !== false,
     tone: edge.tone || (edge.style === "dashed" || edge.style === "feedback" ? "accent" : "ink"),
     points: edge.points || [],
     fromAnchor: edge.fromAnchor || null,
@@ -682,7 +703,7 @@ function createProfessionalTemplate(diagramType) {
     templateNode("framework", 3, "概念架構與研究命題", "形成變項關係、命題與分析焦點", "ellipse", "concept", 835, 240, 310, 112),
     templateNode("data", 4, "資料來源與樣本", "文本、政策文件、案例或訪談資料", "parallelogram", "data", 170, 520, 310, 112),
     templateNode("method", 5, "方法設計與分析策略", "編碼、比較、模型或詮釋分析", "hexagon", "method", 565, 510, 330, 122),
-    templateNode("check", 6, "信度效度與倫理檢核", "資料品質、研究倫理與偏誤修正", "diamond", "decision", 960, 500, 230, 170),
+    templateNode("check", 6, "信度效度與倫理檢核", "資料品質、研究倫理與偏誤修正", "diamond", "decision", 960, 462, 218, 218),
     templateNode("output", 7, "研究發現與政策建議", "理論貢獻、實務建議與後續研究", "pill", "output", 485, 815, 350, 104),
   ];
   const edges = [
@@ -692,7 +713,7 @@ function createProfessionalTemplate(diagramType) {
     templateEdge("data", "method", "", "curved", "solid", "end"),
     templateEdge("method", "check", "", "curved", "solid", "end"),
     templateEdge("check", "output", "通過", "curved", "solid", "end"),
-    templateEdge("check", "method", "修正設計", "curved", "feedback", "end"),
+    templateEdge("check", "method", "修正設計", "curved", "feedback", "both"),
     templateEdge("output", "problem", "形成新問題", "curved", "dashed", "end"),
   ];
   return {
@@ -735,7 +756,10 @@ function templateEdge(from, to, label, line, style, arrow) {
     strokeWidth: style === "feedback" ? 2.4 : 2,
     tone: style === "dashed" || style === "feedback" ? "accent" : "ink",
     arrowStyle: "triangle",
+    dashLength: style === "feedback" ? 6 : 8,
+    dashGap: style === "feedback" ? 7 : 7,
     curveTension: 0.65,
+    autoRoute: true,
   };
 }
 
@@ -829,8 +853,8 @@ function nodeForStep(step, index, diagramType, parsed) {
     palette,
     x: 360,
     y: 240 + index * 142,
-    w: shape === "circle" ? 138 : 360,
-    h: shape === "circle" ? 138 : shape === "diamond" ? 150 : 112,
+    w: shape === "circle" ? 138 : shape === "diamond" ? 188 : 360,
+    h: shape === "circle" ? 138 : shape === "diamond" ? 188 : 112,
   };
 }
 
@@ -892,14 +916,17 @@ function smartEdge(from, to, index, label, line, style) {
     label,
     line,
     style,
-    arrow: "end",
+    arrow: style === "feedback" ? "both" : "end",
     fromAnchor: preferredAnchor(from, to, "from"),
     toAnchor: preferredAnchor(to, from, "to"),
     points: [],
     strokeWidth: style === "feedback" ? 2.4 : 2,
     tone: style === "dashed" || style === "feedback" ? "accent" : "ink",
     arrowStyle: "triangle",
+    dashLength: style === "feedback" ? 6 : 8,
+    dashGap: style === "feedback" ? 7 : 7,
     curveTension: 0.65,
+    autoRoute: true,
   };
 }
 
@@ -912,6 +939,19 @@ function preferredAnchor(node, other, direction) {
   const dy = oy - cy;
   if (Math.abs(dx) > Math.abs(dy)) return { x: dx > 0 ? 1 : 0, y: 0.5 };
   return { x: 0.5, y: dy > 0 ? 1 : 0 };
+}
+
+function rerouteEdgesForNode(nodeId) {
+  const nodesById = new Map(state.nodes.map((node) => [node.id, node]));
+  state.edges.forEach((edge) => {
+    if (edge.autoRoute === false || (edge.from !== nodeId && edge.to !== nodeId)) return;
+    const from = nodesById.get(edge.from);
+    const to = nodesById.get(edge.to);
+    if (!from || !to) return;
+    edge.fromAnchor = preferredAnchor(from, to, "from");
+    edge.toAnchor = preferredAnchor(to, from, "to");
+    edge.points = [];
+  });
 }
 
 function arrangeNodes(nodes, diagramType, canvas) {
@@ -966,8 +1006,8 @@ function arrangeNodes(nodes, diagramType, canvas) {
   nodes.forEach((node, index) => {
     node.x = 470;
     node.y = 245 + index * 148;
-    node.w = node.shape === "diamond" ? 320 : 420;
-    node.h = node.shape === "diamond" ? 145 : 108;
+    node.w = node.shape === "diamond" ? 210 : 420;
+    node.h = node.shape === "diamond" ? 210 : 108;
   });
 }
 
@@ -1004,8 +1044,8 @@ function arrangeFrameworkNodes(nodes, canvas) {
     const totalW = countInRow * w + (countInRow - 1) * gap;
     node.x = centerX - totalW / 2 + col * (w + gap);
     node.y = 420 + row * 180;
-    node.w = w;
-    node.h = node.shape === "diamond" ? 138 : 106;
+    node.w = node.shape === "diamond" ? 210 : w;
+    node.h = node.shape === "diamond" ? 210 : 106;
   });
 }
 
@@ -1117,7 +1157,7 @@ function drawEdges(svg) {
     const routePoints = edgeRoutePoints(edge, start, end, from, to);
     const path = edgePath(start, end, edge.line, routePoints, edge.curveTension);
     const selectedEdge = selected.kind === "edge" && selected.id === edge.id;
-    const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": selectedEdge ? 16 : 10, cursor: "pointer" });
+    const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": selectedEdge ? 15 : 8, cursor: "pointer" });
     hit.addEventListener("mousedown", (event) => {
       event.stopPropagation();
       selected = { kind: "edge", id: edge.id };
@@ -1149,7 +1189,7 @@ function drawEdges(svg) {
       fill: "none",
       stroke: selectedEdge ? "#f97316" : edgeColor(edge),
       "stroke-width": selectedEdge ? Math.max(3, Number(edge.strokeWidth || 2) + 0.8) : Number(edge.strokeWidth || 2),
-      "stroke-dasharray": dashArray(edge.style),
+      "stroke-dasharray": dashArray(edge),
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "pointer-events": "none",
@@ -1180,6 +1220,7 @@ function drawEdgeEditHandles(svg, edge, start, end) {
     hit.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      edge.autoRoute = false;
       edgeAnchorDrag = { edgeId: edge.id, end: endKey };
     });
     svg.appendChild(hit);
@@ -1196,6 +1237,7 @@ function drawEdgeEditHandles(svg, edge, start, end) {
     handle.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      edge.autoRoute = false;
       edgeAnchorDrag = { edgeId: edge.id, end: endKey };
     });
     svg.appendChild(handle);
@@ -1217,6 +1259,7 @@ function drawEdgeEditHandles(svg, edge, start, end) {
       event.preventDefault();
       event.stopPropagation();
       ensureEdgePoints(edge, start, end);
+      edge.autoRoute = false;
       edgePointDrag = { edgeId: edge.id, index };
     });
     svg.appendChild(handle);
@@ -1247,6 +1290,7 @@ function drawEdgeSegmentHandles(svg, edge, start, end, points) {
       event.preventDefault();
       event.stopPropagation();
       ensureEdgePoints(edge, start, end);
+      edge.autoRoute = false;
       edge.points.splice(index, 0, middle);
       edgePointDrag = { edgeId: edge.id, index };
       render();
@@ -1267,6 +1311,7 @@ function ensureEdgePoints(edge, start, end) {
 
 function insertEdgePointAt(edge, start, end, point) {
   ensureEdgePoints(edge, start, end);
+  edge.autoRoute = false;
   const route = [start, ...edge.points, end];
   let best = { index: 0, distance: Infinity };
   route.slice(0, -1).forEach((segmentStart, index) => {
@@ -1331,9 +1376,15 @@ function drawEdgeLabel(svg, edge, start, end, routePoints = null) {
   const x = position.x;
   const y = position.y - 12;
   const w = Math.max(62, Math.min(220, weightedLength(label) * 12));
-  const group = svgEl("g", { class: "edge-label", "pointer-events": "none" });
+  const group = svgEl("g", { class: "edge-label", cursor: "text" });
   group.appendChild(svgEl("rect", { x: x - w / 2, y: y - 22, width: w, height: 28, rx: 6, fill: "var(--canvas)", stroke: "var(--panel-border)", "stroke-width": 1 }));
   appendWrappedText(group, label, x, y - 3, w - 14, { "text-anchor": "middle", "font-size": 13, "font-weight": 800, fill: "var(--svg-ink)" }, 1);
+  group.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    selected = { kind: "edge", id: edge.id };
+    openEdgeLabelInlineEditor(edge, { x: x - w / 2, y: y - 25, w, h: 34 });
+  });
   svg.appendChild(group);
 }
 
@@ -1433,6 +1484,7 @@ function drawNode(svg, node) {
   drawNodeText(group, node);
   if (isSelected && !lineMode) drawResizeHandles(group, node);
   group.addEventListener("mousedown", (event) => {
+    if (event.detail >= 2) return;
     event.preventDefault();
     event.stopPropagation();
     if (lineMode) {
@@ -1441,34 +1493,43 @@ function drawNode(svg, node) {
     }
     selected = { kind: "node", id: node.id };
     const point = clientToSvg(event.clientX, event.clientY);
-    dragNode = { id: node.id, offsetX: point.x - node.x, offsetY: point.y - node.y };
-    render();
+    dragNode = { id: node.id, offsetX: point.x - node.x, offsetY: point.y - node.y, moved: false };
   });
   group.addEventListener("dblclick", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    selected = { kind: "node", id: node.id };
-    pendingInspectorRevealId = node.id;
-    render();
-    openNodeInlineEditor(node);
+    openNodeFromCanvas(node.id);
   });
   svg.appendChild(group);
 }
 
+function openNodeFromCanvas(nodeId) {
+  selected = { kind: "node", id: nodeId };
+  render();
+  requestAnimationFrame(() => {
+    revealNodeCard(nodeId);
+    const node = state.nodes.find((item) => item.id === nodeId);
+    if (node) openNodeInlineEditor(node);
+  });
+}
+
 function drawNodeNumberBadge(group, node) {
   const point = numberBadgePoint(node);
-  const badge = svgEl("g", { class: "node-number-marker edit-only", "pointer-events": "none", opacity: 0.72 });
-  badge.appendChild(svgEl("circle", {
-    cx: point.x,
-    cy: point.y,
-    r: 13,
+  const width = String(node.number).length > 1 ? 34 : 28;
+  const badge = svgEl("g", { class: "node-number-marker edit-only", "pointer-events": "none", opacity: selected.kind === "node" && selected.id === node.id ? 0.84 : 0.38 });
+  badge.appendChild(svgEl("rect", {
+    x: point.x,
+    y: point.y,
+    width,
+    height: 18,
+    rx: 9,
     fill: "var(--canvas)",
     stroke: "var(--primary)",
-    "stroke-width": 2,
+    "stroke-width": 1.2,
   }));
-  badge.appendChild(svgText(String(node.number), point.x, point.y + 4.5, {
+  badge.appendChild(svgText(`#${String(node.number).padStart(2, "0")}`, point.x + width / 2, point.y + 12.5, {
     "text-anchor": "middle",
-    "font-size": 12,
+    "font-size": 9,
     "font-weight": 950,
     fill: "var(--primary)",
   }));
@@ -1476,18 +1537,9 @@ function drawNodeNumberBadge(group, node) {
 }
 
 function numberBadgePoint(node) {
-  if (node.shape === "circle" || node.shape === "ellipse") {
-    return { x: node.x + node.w * 0.2, y: node.y + node.h * 0.2 };
-  }
-  if (node.shape === "triangle") {
-    return { x: node.x + node.w * 0.32, y: node.y + node.h * 0.38 };
-  }
-  if (node.shape === "diamond") {
-    return { x: node.x + node.w * 0.25, y: node.y + node.h * 0.28 };
-  }
   return {
-    x: node.x + clamp(node.w * 0.09, 14, 24),
-    y: node.y + clamp(node.h * 0.16, 14, 24),
+    x: node.x + clamp(node.w * 0.04, 8, 16),
+    y: node.y + clamp(node.h * 0.05, 7, 14),
   };
 }
 
@@ -1531,7 +1583,8 @@ function drawNodeText(group, node) {
 
 function nodeTextBox(node) {
   if (node.shape === "diamond") {
-    return { x: node.x + node.w * 0.2, y: node.y + node.h * 0.2, w: node.w * 0.6, h: node.h * 0.6 };
+    const box = diamondVisualBox(node);
+    return { x: box.x + box.w * 0.22, y: box.y + box.h * 0.22, w: box.w * 0.56, h: box.h * 0.56 };
   }
   if (node.shape === "triangle") {
     return { x: node.x + node.w * 0.22, y: node.y + node.h * 0.42, w: node.w * 0.56, h: node.h * 0.46 };
@@ -1540,6 +1593,16 @@ function nodeTextBox(node) {
     return { x: node.x + 26, y: node.y + 18, w: node.w - 52, h: node.h - 36 };
   }
   return { x: node.x + 28, y: node.y + 16, w: node.w - 56, h: node.h - 32 };
+}
+
+function diamondVisualBox(node) {
+  const side = Math.min(node.w, node.h);
+  return {
+    x: node.x + (node.w - side) / 2,
+    y: node.y + (node.h - side) / 2,
+    w: side,
+    h: side,
+  };
 }
 
 function fittedFontSize(text, width, preferred, min, maxLines) {
@@ -1608,7 +1671,8 @@ function drawShape(group, node, palette) {
     return;
   }
   if (node.shape === "diamond") {
-    group.appendChild(svgEl("path", { d: `M ${node.x + node.w / 2} ${node.y} L ${node.x + node.w} ${node.y + node.h / 2} L ${node.x + node.w / 2} ${node.y + node.h} L ${node.x} ${node.y + node.h / 2} Z`, ...attrs }));
+    const box = diamondVisualBox(node);
+    group.appendChild(svgEl("path", { d: `M ${box.x + box.w / 2} ${box.y} L ${box.x + box.w} ${box.y + box.h / 2} L ${box.x + box.w / 2} ${box.y + box.h} L ${box.x} ${box.y + box.h / 2} Z`, ...attrs }));
     return;
   }
   if (node.shape === "triangle") {
@@ -1628,6 +1692,12 @@ function drawShape(group, node, palette) {
   if (node.shape === "document") {
     const wave = 16;
     group.appendChild(svgEl("path", { d: `M ${node.x} ${node.y} H ${node.x + node.w} V ${node.y + node.h - wave} C ${node.x + node.w * 0.72} ${node.y + node.h - wave * 2}, ${node.x + node.w * 0.42} ${node.y + node.h + wave * 0.5}, ${node.x} ${node.y + node.h - wave} Z`, ...attrs }));
+    return;
+  }
+  if (node.shape === "subroutine") {
+    group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, rx: 8, ...attrs }));
+    group.appendChild(svgEl("line", { x1: node.x + 20, y1: node.y, x2: node.x + 20, y2: node.y + node.h, stroke: attrs.stroke, "stroke-width": Math.max(1, attrs["stroke-width"] * 0.76) }));
+    group.appendChild(svgEl("line", { x1: node.x + node.w - 20, y1: node.y, x2: node.x + node.w - 20, y2: node.y + node.h, stroke: attrs.stroke, "stroke-width": Math.max(1, attrs["stroke-width"] * 0.76) }));
     return;
   }
   if (node.shape === "cylinder") {
@@ -1786,6 +1856,7 @@ function onDocumentMouseMove(event) {
     const node = state.nodes.find((item) => item.id === resizeDrag.id);
     if (!node) return;
     resizeSelectedNode(node, event);
+    rerouteEdgesForNode(node.id);
     render();
     return;
   }
@@ -1817,6 +1888,8 @@ function onDocumentMouseMove(event) {
     const point = clientToSvg(event.clientX, event.clientY);
     node.x = clamp(point.x - dragNode.offsetX, 24, state.canvas.width - node.w - 24);
     node.y = clamp(point.y - dragNode.offsetY, 140, state.canvas.height - node.h - 100);
+    dragNode.moved = true;
+    rerouteEdgesForNode(node.id);
     render();
     return;
   }
@@ -1850,12 +1923,19 @@ function onDocumentMouseUp() {
   }
   if (dragNode) {
     const node = state.nodes.find((item) => item.id === dragNode.id);
+    const moved = dragNode.moved;
     if (node && snapToGrid) {
       node.x = snap(node.x);
       node.y = snap(node.y);
     }
     dragNode = null;
-    render();
+    if (moved) {
+      render();
+    } else {
+      window.setTimeout(() => {
+        if (!inlineEditor) render();
+      }, 180);
+    }
   }
   if (panDrag) {
     const needsRender = panDrag.moved || panDrag.hadSelection;
@@ -1967,6 +2047,16 @@ function openLegendInlineEditor(item, rect) {
   });
 }
 
+function openEdgeLabelInlineEditor(edge, rect) {
+  openInlineEditor({
+    value: edge.label || "",
+    rect,
+    commit: (value) => {
+      edge.label = value.trim();
+    },
+  });
+}
+
 function openInlineEditor({ value, rect, commit }) {
   closeInlineEditor(false);
   const svgRect = els.diagramCanvas.getBoundingClientRect();
@@ -2030,10 +2120,7 @@ function renderLegendEditor() {
       selected = { kind: "node", id: node.id };
       render();
     });
-    const swatch = document.createElement("span");
-    swatch.className = `legend-swatch ${node.shape}`;
-    swatch.style.setProperty("--swatch-fill", palette.fill);
-    swatch.style.setProperty("--swatch-stroke", palette.stroke);
+    const swatch = createMiniShapePreview(node, palette);
     const meta = document.createElement("div");
     meta.className = "node-editor-meta";
     meta.innerHTML = `<strong>圖框 ${node.number}</strong><span>${shapeLabels[node.shape] || "圖框"} · ${paletteLabel(node.palette)}</span>`;
@@ -2045,9 +2132,14 @@ function renderLegendEditor() {
       rebuildFlow();
       render();
     });
+    title.classList.add("title-field");
     const body = editorTextarea("說明", node.body, (value) => {
       node.body = value;
     }, render);
+    body.classList.add("body-field");
+    const textGrid = document.createElement("div");
+    textGrid.className = "node-editor-textgrid";
+    textGrid.append(title, body);
 
     const controlGrid = document.createElement("div");
     controlGrid.className = "node-editor-grid";
@@ -2092,7 +2184,7 @@ function renderLegendEditor() {
         render();
       }),
     );
-    card.append(head, title, body, controlGrid, styleGrid);
+    card.append(head, textGrid, controlGrid, styleGrid);
     els.legendEditor.appendChild(card);
   });
   if (pendingInspectorRevealId) {
@@ -2100,6 +2192,43 @@ function renderLegendEditor() {
     pendingInspectorRevealId = null;
     requestAnimationFrame(() => revealNodeCard(id));
   }
+}
+
+function createMiniShapePreview(node, palette) {
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("class", "node-mini-preview");
+  svg.setAttribute("viewBox", "0 0 48 30");
+  svg.setAttribute("aria-hidden", "true");
+  const stroke = node.borderVisible === false ? "transparent" : (node.borderColor || palette.stroke);
+  const width = Math.max(1.2, Math.min(2.8, Number(node.strokeWidth || 2) * 0.72));
+  const attrs = { fill: palette.fill, stroke, "stroke-width": width, "vector-effect": "non-scaling-stroke" };
+  const append = (tag, values) => svg.appendChild(svgEl(tag, { ...attrs, ...values }));
+  if (node.shape === "circle") append("ellipse", { cx: 24, cy: 15, rx: 11, ry: 11 });
+  else if (node.shape === "ellipse") append("ellipse", { cx: 24, cy: 15, rx: 17, ry: 10 });
+  else if (node.shape === "diamond") append("path", { d: "M24 3 L39 15 L24 27 L9 15 Z" });
+  else if (node.shape === "triangle") append("path", { d: "M24 4 L40 26 L8 26 Z", "stroke-linejoin": "round" });
+  else if (node.shape === "hexagon") append("path", { d: "M13 4 H35 L43 15 L35 26 H13 L5 15 Z", "stroke-linejoin": "round" });
+  else if (node.shape === "parallelogram") append("path", { d: "M13 5 H43 L35 25 H5 Z", "stroke-linejoin": "round" });
+  else if (node.shape === "document") append("path", { d: "M7 5 H41 V22 C32 18 24 28 7 23 Z", "stroke-linejoin": "round" });
+  else if (node.shape === "subroutine") {
+    append("rect", { x: 6, y: 6, width: 36, height: 18, rx: 4 });
+    svg.appendChild(svgEl("line", { x1: 14, y1: 6, x2: 14, y2: 24, stroke, "stroke-width": width, "vector-effect": "non-scaling-stroke" }));
+    svg.appendChild(svgEl("line", { x1: 34, y1: 6, x2: 34, y2: 24, stroke, "stroke-width": width, "vector-effect": "non-scaling-stroke" }));
+  } else if (node.shape === "cylinder") {
+    append("path", { d: "M7 10 C7 4 41 4 41 10 V21 C41 27 7 27 7 21 Z" });
+    svg.appendChild(svgEl("ellipse", { cx: 24, cy: 10, rx: 17, ry: 5, fill: "none", stroke, "stroke-width": width, "vector-effect": "non-scaling-stroke" }));
+  } else if (node.shape === "table") {
+    append("rect", { x: 6, y: 5, width: 36, height: 20, rx: 3 });
+    [18, 30].forEach((x) => svg.appendChild(svgEl("line", { x1: x, y1: 5, x2: x, y2: 25, stroke, "stroke-width": 1, "vector-effect": "non-scaling-stroke" })));
+    [12, 18].forEach((y) => svg.appendChild(svgEl("line", { x1: 6, y1: y, x2: 42, y2: y, stroke, "stroke-width": 1, "vector-effect": "non-scaling-stroke" })));
+  } else if (node.shape === "callout") append("path", { d: "M6 5 H42 V21 H20 L13 27 L15 21 H6 Z", "stroke-linejoin": "round" });
+  else if (node.shape === "swimlane") {
+    append("rect", { x: 5, y: 5, width: 38, height: 20, rx: 4 });
+    svg.appendChild(svgEl("line", { x1: 17, y1: 5, x2: 17, y2: 25, stroke, "stroke-width": width, "vector-effect": "non-scaling-stroke" }));
+  } else if (node.shape === "legend") append("rect", { x: 6, y: 5, width: 36, height: 20, rx: 4, "stroke-dasharray": "5 4" });
+  else if (node.shape === "brace") svg.appendChild(svgText("{", 17, 25, { "font-size": 28, "font-weight": 300, fill: stroke }));
+  else append("rect", { x: 6, y: 6, width: 36, height: 18, rx: node.shape === "pill" ? 9 : 4 });
+  return svg;
 }
 
 function renderEdgeEditor() {
@@ -2176,6 +2305,16 @@ function renderEdgeEditor() {
         selected = { kind: "edge", id: edge.id };
         render();
       }),
+      editorNumber("虛線長", edge.dashLength || 8, 1, 24, (value) => {
+        edge.dashLength = clamp(value, 1, 24);
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorNumber("間距", edge.dashGap || 7, 1, 28, (value) => {
+        edge.dashGap = clamp(value, 1, 28);
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
       editorNumber("控制點", Array.isArray(edge.points) ? edge.points.length : 0, 0, 8, (value) => {
         setEdgePointCount(edge, value);
         selected = { kind: "edge", id: edge.id };
@@ -2197,6 +2336,20 @@ function renderEdgeEditor() {
       }),
       editorRange("曲率", Number(edge.curveTension ?? 0.65), 0.15, 1.2, 0.05, (value) => {
         edge.curveTension = value;
+        selected = { kind: "edge", id: edge.id };
+        render();
+      }),
+      editorCheckbox("智慧線", edge.autoRoute !== false, (checked) => {
+        edge.autoRoute = checked;
+        if (checked) {
+          edge.points = [];
+          const fromNode = state.nodes.find((node) => node.id === edge.from);
+          const toNode = state.nodes.find((node) => node.id === edge.to);
+          if (fromNode && toNode) {
+            edge.fromAnchor = preferredAnchor(fromNode, toNode, "from");
+            edge.toAnchor = preferredAnchor(toNode, fromNode, "to");
+          }
+        }
         selected = { kind: "edge", id: edge.id };
         render();
       }),
@@ -2380,9 +2533,10 @@ function normalizeColor(value) {
 
 function revealNodeCard(nodeId) {
   const panel = els.legendEditor.closest(".inspector-panel");
-  const card = els.legendEditor.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`);
+  const card = Array.from(els.legendEditor.querySelectorAll("[data-node-id]")).find((item) => item.dataset.nodeId === nodeId);
   if (!panel || !card) return;
-  panel.scrollTop = Math.max(0, card.offsetTop - panel.offsetTop - 76);
+  const target = card.offsetTop - panel.clientHeight * 0.28;
+  panel.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
   card.classList.add("pulse");
   window.setTimeout(() => card.classList.remove("pulse"), 1100);
 }
@@ -2470,12 +2624,13 @@ function addShapeNode(shape, palette) {
 function defaultShapeSize(shape) {
   const sizes = {
     circle: { w: 138, h: 138 },
-    diamond: { w: 188, h: 146 },
-    ellipse: { w: 230, h: 118 },
+    diamond: { w: 188, h: 188 },
+    ellipse: { w: 210, h: 112 },
     triangle: { w: 188, h: 150 },
     hexagon: { w: 260, h: 116 },
     parallelogram: { w: 290, h: 108 },
     document: { w: 300, h: 116 },
+    subroutine: { w: 300, h: 108 },
     cylinder: { w: 250, h: 126 },
     table: { w: 310, h: 126 },
     callout: { w: 280, h: 104 },
@@ -2494,6 +2649,7 @@ function autoArrange() {
     node.x = snap(node.x);
     node.y = snap(node.y);
   });
+  state.nodes.forEach((node) => rerouteEdgesForNode(node.id));
   rebuildFlow();
   ensureCanvasFits();
   render();
@@ -2533,6 +2689,12 @@ function setEdgePointCount(edge, count) {
   const from = state.nodes.find((node) => node.id === edge.from);
   const to = state.nodes.find((node) => node.id === edge.to);
   if (!from || !to) return;
+  if (nextCount === 0) {
+    edge.points = [];
+    edge.autoRoute = true;
+    return;
+  }
+  edge.autoRoute = false;
   const start = edgeEndpointPoint(from, to, edge.fromAnchor);
   const end = edgeEndpointPoint(to, from, edge.toAnchor);
   const current = Array.isArray(edge.points) ? edge.points.slice(0, nextCount) : [];
@@ -2883,17 +3045,19 @@ function normalizeState(input) {
 }
 
 function normalizeNode(node, index) {
+  const shape = shapeLabels[node.shape] ? node.shape : "rounded";
+  const size = defaultShapeSize(shape);
   return {
     id: node.id || `node-${Date.now()}-${index}`,
     number: Number(node.number || index + 1),
     title: node.title || "圖框",
     body: node.body || "",
-    shape: node.shape || "rounded",
+    shape,
     palette: node.palette || "process",
     x: Number(node.x || 420),
     y: Number(node.y || 240 + index * 140),
-    w: Number(node.w || 320),
-    h: Number(node.h || 110),
+    w: Number(node.w || size.w),
+    h: Number(node.h || size.h),
     borderVisible: node.borderVisible !== false,
     borderColor: node.borderColor || "",
     strokeWidth: Number(node.strokeWidth || 2),
@@ -2914,8 +3078,11 @@ function normalizeEdge(edge) {
     toAnchor: normalizeAnchor(edge.toAnchor),
     points: Array.isArray(edge.points) ? edge.points.map(normalizePoint).filter(Boolean) : [],
     strokeWidth: Number(edge.strokeWidth || 2),
+    dashLength: Number(edge.dashLength || (edge.style === "dotted" ? 2 : 8)),
+    dashGap: Number(edge.dashGap || (edge.style === "dotted" ? 8 : 7)),
     curveTension: Number(edge.curveTension ?? 0.65),
     tone: edge.tone || "ink",
+    autoRoute: edge.autoRoute !== false,
   };
 }
 
@@ -3031,12 +3198,15 @@ function shapePolygon(node) {
   const y = node.y;
   const w = node.w;
   const h = node.h;
-  if (node.shape === "diamond") return [
-    { x: x + w / 2, y },
-    { x: x + w, y: y + h / 2 },
-    { x: x + w / 2, y: y + h },
-    { x, y: y + h / 2 },
-  ];
+  if (node.shape === "diamond") {
+    const box = diamondVisualBox(node);
+    return [
+      { x: box.x + box.w / 2, y: box.y },
+      { x: box.x + box.w, y: box.y + box.h / 2 },
+      { x: box.x + box.w / 2, y: box.y + box.h },
+      { x: box.x, y: box.y + box.h / 2 },
+    ];
+  }
   if (node.shape === "triangle") return [
     { x: x + w / 2, y },
     { x: x + w, y: y + h },
@@ -3170,10 +3340,13 @@ function smoothPath(points, tension = 0.65) {
   return path.join(" ");
 }
 
-function dashArray(style) {
-  if (style === "dashed") return "8 7";
-  if (style === "dotted") return "2 7";
-  if (style === "feedback") return "5 6";
+function dashArray(edge) {
+  const style = typeof edge === "string" ? edge : edge?.style;
+  const dash = clamp(Number(edge?.dashLength || (style === "dotted" ? 2 : style === "feedback" ? 6 : 8)), 1, 28);
+  const gap = clamp(Number(edge?.dashGap || (style === "dotted" ? 8 : 7)), 1, 32);
+  if (style === "dashed") return `${dash} ${gap}`;
+  if (style === "dotted") return `${Math.min(3, dash)} ${gap}`;
+  if (style === "feedback") return `${dash} ${gap}`;
   return "0";
 }
 

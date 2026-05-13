@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>學術研究的 AI 畫布</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232357ff'/%3E%3Cpath d='M18 18h28v10H18zM18 36h28v10H18z' fill='white' opacity='.95'/%3E%3Cpath d='M32 28v8' stroke='%23ffb86b' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body data-theme="light">
@@ -96,6 +97,7 @@
             <button data-shape="hexagon" data-palette="method" type="button"><span class="shape-sample hexagon"></span>方法六角</button>
             <button data-shape="parallelogram" data-palette="data" type="button"><span class="shape-sample parallelogram"></span>資料輸入</button>
             <button data-shape="document" data-palette="reference" type="button"><span class="shape-sample document"></span>文件/文獻</button>
+            <button data-shape="subroutine" data-palette="process" type="button"><span class="shape-sample subroutine"></span>雙線模組</button>
             <button data-shape="cylinder" data-palette="data" type="button"><span class="shape-sample cylinder"></span>資料庫</button>
             <button data-shape="table" data-palette="reference" type="button"><span class="shape-sample table"></span>矩陣表</button>
             <button data-shape="callout" data-palette="warning" type="button"><span class="shape-sample callout"></span>註解框</button>
@@ -109,12 +111,14 @@
           <h2>箭頭模組</h2>
           <p class="hint">先選箭頭，再依序點兩個圖框建立連線。</p>
           <div class="arrow-grid" id="arrowGrid">
-            <button data-line="curved" data-style="solid" data-arrow="end" data-width="2" data-tone="ink" type="button"><span class="line-preview curved"></span>單向曲線</button>
-            <button data-line="straight" data-style="solid" data-arrow="end" data-width="1.4" data-tone="muted" type="button"><span class="line-preview thin"></span>細直線</button>
-            <button data-line="elbow" data-style="solid" data-arrow="end" data-width="2" data-tone="ink" type="button"><span class="line-preview elbow"></span>折線箭頭</button>
-            <button data-line="curved" data-style="dashed" data-arrow="end" data-width="2" data-tone="accent" type="button"><span class="line-preview dashed"></span>虛線關聯</button>
-            <button data-line="curved" data-style="feedback" data-arrow="both" data-width="2.4" data-tone="accent" type="button"><span class="line-preview feedback"></span>雙向回饋</button>
-            <button data-line="curved" data-style="solid" data-arrow="end" data-width="2" data-tone="soft" type="button"><span class="line-preview soft"></span>背板線</button>
+            <button data-line="curved" data-style="solid" data-arrow="end" data-arrow-style="triangle" data-width="2" data-tone="ink" type="button"><span class="line-preview curved"></span>單向曲線</button>
+            <button data-line="straight" data-style="solid" data-arrow="end" data-arrow-style="open" data-width="1.4" data-tone="muted" type="button"><span class="line-preview thin"></span>開口細線</button>
+            <button data-line="elbow" data-style="solid" data-arrow="end" data-arrow-style="triangle" data-width="2" data-tone="ink" type="button"><span class="line-preview elbow"></span>折線箭頭</button>
+            <button data-line="curved" data-style="dashed" data-arrow="end" data-arrow-style="triangle" data-width="2" data-tone="accent" data-dash-length="9" data-dash-gap="8" type="button"><span class="line-preview dashed"></span>虛線關聯</button>
+            <button data-line="curved" data-style="feedback" data-arrow="both" data-arrow-style="open" data-width="2.4" data-tone="accent" data-dash-length="6" data-dash-gap="7" type="button"><span class="line-preview feedback"></span>雙向回饋</button>
+            <button data-line="curved" data-style="solid" data-arrow="end" data-arrow-style="triangle" data-width="2" data-tone="soft" type="button"><span class="line-preview soft"></span>半透明背板</button>
+            <button data-line="curved" data-style="dotted" data-arrow="none" data-arrow-style="dot" data-width="2" data-tone="muted" data-dash-length="2" data-dash-gap="8" type="button"><span class="line-preview dotted"></span>點線註解</button>
+            <button data-line="straight" data-style="solid" data-arrow="both" data-arrow-style="diamond" data-width="2" data-tone="ink" type="button"><span class="line-preview diamond-arrow"></span>雙端關係</button>
           </div>
           <p id="lineModeHint" class="hint">目前未啟用連線工具。</p>
         </section>
@@ -188,7 +192,7 @@
         <h2>使用說明</h2>
         <p>這個工具不是一次完成，而是用研究流程圖的方式反覆產生、檢查、修正與輸出。</p>
       </div>
-      <div class="help-flow-card">
+      <div class="help-flow-card guide-spread">
         <svg class="help-flow-svg" viewBox="0 0 980 560" role="img" aria-label="使用流程圖">
           <defs>
             <marker id="helpArrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">

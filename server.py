@@ -70,6 +70,14 @@ SECTION_ALIASES = {
     "notes": ["註解", "notes", "備註", "限制"],
 }
 
+ACADEMIC_FIGURE_STYLE_GUIDE = """請固定參考使用者一開始提供的 ViT / Encoder Transformer 學術圖鑑風格，將它轉成以下文字化設計標準：
+1. 白色論文圖底，黑色高權重標題，副標題清楚但不搶主圖。
+2. 主流程採中心對齊或清楚的分層網格，圖框間距一致，避免小畫家式任意散落。
+3. 色彩以淡色填底加高對比邊框：藍=嵌入/輸入，紅=注意力/判斷，橙=交叉或方法補充，綠=MLP/輸出，灰=規範/殘差/檢核。
+4. 圖框文字短而可讀，標題 12 字以內，補充文字 30 字以內，寧可增加節點也不要塞爆單一框。
+5. 線條要有語意：主流程用實線箭頭，補充關係用虛線，回饋修正用曲線或雙向箭頭；箭頭應指向圖框邊界中心或最合理的側邊。
+6. 視覺上要像正式論文/方法圖：一致線寬、穩定圓角、乾淨圖例、底部 Flow 條，以及必要的 Notes/Legend，而不是裝飾性模板。"""
+
 
 @dataclass
 class ParsedSections:
@@ -455,16 +463,19 @@ def maybe_call_external_llm(text: str, diagram_type: str = "flowchart", mode: st
 def build_llm_diagram_prompt(text: str, diagram_type: str) -> str:
     return f"""請把下列研究文字轉成「學術研究架構圖」JSON。請真正判斷研究邏輯，不要只摘句子。
 
+參考圖鑑風格標準:
+{ACADEMIC_FIGURE_STYLE_GUIDE}
+
 輸出只允許 JSON，不要 Markdown。JSON schema:
 {{
   "title": "圖標題",
   "subtitle": "副標題",
   "diagramType": "{diagram_type}",
   "nodes": [
-    {{"id":"n1","number":1,"title":"短標題","body":"說明","role":"input|theory|concept|method|analysis|validation|output|note","shape":"rounded|pill|diamond|circle|ellipse|triangle|hexagon|parallelogram|document|cylinder|table|callout|swimlane|legend|brace","palette":"process|concept|data|method|decision|output|reference|warning|node","x":120,"y":240,"w":300,"h":110}}
+    {{"id":"n1","number":1,"title":"短標題","body":"說明","role":"input|theory|concept|method|analysis|validation|output|note","shape":"rounded|pill|diamond|circle|ellipse|triangle|hexagon|parallelogram|document|subroutine|cylinder|table|callout|swimlane|legend|brace","palette":"process|concept|data|method|decision|output|reference|warning|node","x":120,"y":240,"w":300,"h":110}}
   ],
   "edges": [
-    {{"id":"e1","from":"n1","to":"n2","label":"關係文字","line":"curved|straight|elbow","style":"solid|dashed|dotted|feedback","arrow":"end|both|start|none","arrowStyle":"triangle|open|diamond|dot","strokeWidth":2,"curveTension":0.65}}
+    {{"id":"e1","from":"n1","to":"n2","label":"關係文字","line":"curved|straight|elbow","style":"solid|dashed|dotted|feedback","arrow":"end|both|start|none","arrowStyle":"triangle|open|diamond|dot","strokeWidth":2,"dashLength":8,"dashGap":7,"curveTension":0.65,"autoRoute":true}}
   ],
   "legend": {{"shape:palette":"圖例文字"}},
   "flow": "底部流程文字",
@@ -474,6 +485,8 @@ def build_llm_diagram_prompt(text: str, diagram_type: str) -> str:
 排版要求:
 - 節點 5 到 10 個，不要擠成一條直線。
 - 研究架構圖要有層次、群組、回饋路徑或虛線關聯。
+- 請輸出接近範例圖鑑的專業論文圖：有主圖、圖例、底部 Flow，線條端點要貼到圖框合理側邊。
+- 菱形只用於判斷或檢核，尺寸請接近正方形，避免文字超出。
 - 框內標題 12 字以內，body 30 字以內。
 - 若原文是整篇文章，請歸納成研究問題、理論/概念、資料、方法、分析、發現/輸出，不要逐段照抄。
 
