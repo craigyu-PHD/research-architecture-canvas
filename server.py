@@ -13,6 +13,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -469,11 +470,15 @@ class ResearchCanvasHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if self.path == "/api/health":
+        parsed = urllib.parse.urlparse(self.path)
+        clean_path = parsed.path
+        if clean_path == "/api/health":
             self.end_json(200, {"ok": True, "engine": "local-rule-analysis"})
             return
-        if self.path == "/":
+        if clean_path == "/":
             self.path = "/index.html"
+        else:
+            self.path = clean_path
         super().do_GET()
 
     def do_POST(self) -> None:
