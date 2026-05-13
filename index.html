@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>研究架構圖 AI 畫布</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Research Architecture Canvas</p>
+        <h1>研究架構圖 AI 畫布</h1>
+      </div>
+      <div class="status-group">
+        <span id="engineStatus" class="status-pill">本地即時分析</span>
+        <button id="leftToggleBtn" class="ghost-btn" type="button" aria-pressed="false">收合左欄</button>
+        <button id="rightToggleBtn" class="ghost-btn" type="button" aria-pressed="false">收合右欄</button>
+        <button id="saveLocalBtn" class="ghost-btn" type="button">儲存草稿</button>
+        <button id="resetBtn" class="ghost-btn danger" type="button">重置</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel input-panel" aria-label="研究文字輸入與元件工具">
+        <section class="panel-section">
+          <div class="section-head">
+            <div>
+              <h2>研究文字</h2>
+              <p>先用本地引擎秒級出圖，再背景補強建議。</p>
+            </div>
+            <button id="loadSampleBtn" class="text-btn" type="button">載入範例</button>
+          </div>
+          <textarea id="researchInput" spellcheck="false" placeholder="貼上研究主題、資料來源、研究架構、研究流程、方法、核心分析、研究輸出。"></textarea>
+          <div class="button-row">
+            <button id="analyzeBtn" class="primary-btn" type="button">AI 解析生成</button>
+            <button id="clearInputBtn" class="secondary-btn" type="button">清空</button>
+          </div>
+          <div class="analysis-meter" aria-label="分析狀態">
+            <span id="analysisPrimary">待輸入</span>
+            <span id="analysisSecondary">本地引擎不會把文字送出瀏覽器</span>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <details class="settings-box">
+            <summary>協同 AI 設定</summary>
+            <p class="hint">預設不外送資料。若要使用免費額度 API，請使用前端可公開的 publishable key；不要貼 secret key。</p>
+            <label class="check-row">
+              <input id="onlineAssistToggle" type="checkbox">
+              <span>啟用線上協同建議</span>
+            </label>
+            <label class="inline-field">API 預設
+              <select id="apiPresetInput">
+                <option value="">自訂 / 不使用</option>
+                <option value="pollinations">Pollinations OpenAI-compatible</option>
+                <option value="huggingface">Hugging Face Router</option>
+              </select>
+            </label>
+            <label class="inline-field">Base URL
+              <input id="apiBaseInput" type="text" placeholder="https://gen.pollinations.ai">
+            </label>
+            <label class="inline-field">Model
+              <input id="apiModelInput" type="text" placeholder="openai">
+            </label>
+            <label class="inline-field">Publishable Token
+              <input id="apiKeyInput" type="password" placeholder="只填可放在前端的 key">
+            </label>
+          </details>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-head">
+            <div>
+              <h2>資料選取模組</h2>
+              <p>點一下即可新增到畫布。</p>
+            </div>
+          </div>
+          <div class="tool-grid dense" id="toolGrid">
+            <button data-type="question" type="button">研究問題</button>
+            <button data-type="input" type="button">資料來源</button>
+            <button data-type="framework" type="button">研究架構</button>
+            <button data-type="process" type="button">研究流程</button>
+            <button data-type="theory" type="button">理論架構</button>
+            <button data-type="method" type="button">研究方法</button>
+            <button data-type="core" type="button">核心分析</button>
+            <button data-type="validation" type="button">檢核機制</button>
+            <button data-type="output" type="button">研究輸出</button>
+            <button data-type="limitation" type="button">限制說明</button>
+            <button data-type="reference" type="button">參考文獻</button>
+            <button data-type="optional" type="button">補充分析</button>
+          </div>
+        </section>
+
+        <section class="panel-section compact">
+          <h2>圖面操作</h2>
+          <div class="button-stack">
+            <button id="autoArrangeBtn" class="secondary-btn" type="button">自動排版</button>
+            <button id="lineModeBtn" class="secondary-btn" type="button" aria-pressed="false">新增線條：關</button>
+            <button id="duplicateBtn" class="secondary-btn" type="button">複製選取模組</button>
+            <button id="deleteBtn" class="secondary-btn danger" type="button">刪除選取物件</button>
+          </div>
+          <p id="lineModeHint" class="hint">開啟後依序點兩個模組，即可建立連接線。</p>
+        </section>
+      </aside>
+
+      <section class="canvas-stage" aria-label="研究架構圖畫布">
+        <div class="canvas-toolbar">
+          <div class="toolbar-group">
+            <button id="zoomOutBtn" class="icon-btn" type="button" title="縮小">−</button>
+            <input id="zoomSlider" type="range" min="35" max="180" value="100" aria-label="縮放比例">
+            <button id="zoomInBtn" class="icon-btn" type="button" title="放大">+</button>
+            <span id="zoomLabel">100%</span>
+            <button id="fitBtn" class="secondary-btn small" type="button">適合視窗</button>
+            <button id="expandCanvasBtn" class="secondary-btn small" type="button">擴大畫布</button>
+          </div>
+          <div class="toolbar-group">
+            <button id="exportSvgBtn" class="secondary-btn small" type="button">匯出 SVG</button>
+            <button id="exportPngBtn" class="secondary-btn small" type="button">匯出 PNG</button>
+            <button id="exportJsonBtn" class="secondary-btn small" type="button">匯出 JSON</button>
+            <label class="secondary-btn small file-label" for="importJsonInput">匯入 JSON</label>
+            <input id="importJsonInput" type="file" accept="application/json">
+          </div>
+        </div>
+        <div class="canvas-scroll">
+          <svg id="diagramCanvas" role="img" aria-label="可編輯研究架構圖"></svg>
+        </div>
+      </section>
+
+      <aside class="panel inspector-panel" aria-label="AI 建議、模板與屬性編輯">
+        <section class="panel-section">
+          <div class="section-head">
+            <div>
+              <h2>AI 繪圖建議</h2>
+              <p>結構、版面與缺漏提醒。</p>
+            </div>
+            <span id="suggestionCount" class="mini-count">0</span>
+          </div>
+          <div id="suggestions" class="suggestion-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <h2>功能模板</h2>
+          <div class="template-grid" id="templateGrid">
+            <button data-template="thesis" type="button">博士論文研究設計</button>
+            <button data-template="journal" type="button">期刊論文方法架構</button>
+            <button data-template="policy" type="button">政策分析流程</button>
+            <button data-template="literature" type="button">文獻綜述流程</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>選取物件</h2>
+          <div id="emptyInspector" class="empty-state">點選模組或線條後，可在這裡修改文字、類型、尺寸與線條樣式。</div>
+          <div id="nodeInspectorForm" class="inspector-form hidden">
+            <label>標題<input id="nodeTitleInput" type="text"></label>
+            <label>說明<textarea id="nodeBodyInput"></textarea></label>
+            <label>類型
+              <select id="nodeTypeInput">
+                <option value="question">研究問題</option>
+                <option value="input">資料來源</option>
+                <option value="framework">研究架構</option>
+                <option value="process">研究流程</option>
+                <option value="theory">理論架構</option>
+                <option value="method">研究方法</option>
+                <option value="analysis">一般分析</option>
+                <option value="core">核心分析</option>
+                <option value="validation">檢核機制</option>
+                <option value="output">研究輸出</option>
+                <option value="limitation">限制說明</option>
+                <option value="reference">參考文獻</option>
+                <option value="optional">補充分析</option>
+              </select>
+            </label>
+            <div class="field-grid">
+              <label>寬<input id="nodeWidthInput" type="number" min="180" max="820"></label>
+              <label>高<input id="nodeHeightInput" type="number" min="72" max="480"></label>
+            </div>
+          </div>
+          <div id="edgeInspectorForm" class="inspector-form hidden">
+            <label>線條標籤<input id="edgeLabelInput" type="text" placeholder="例如：驗證、回饋、引用"></label>
+            <label>線條樣式
+              <select id="edgeStyleInput">
+                <option value="solid">實線</option>
+                <option value="dashed">虛線</option>
+                <option value="feedback">回饋線</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>圖表文字</h2>
+          <label class="inline-field">標題<input id="diagramTitleInput" type="text"></label>
+          <label class="inline-field">副標題<input id="diagramSubtitleInput" type="text"></label>
+          <label class="inline-field">底部 Flow<textarea id="diagramFlowInput"></textarea></label>
+        </section>
+      </aside>
+    </main>
+
+    <section class="usage-guide" aria-label="使用說明">
+      <div>
+        <p class="eyebrow">Guide</p>
+        <h2>使用說明</h2>
+      </div>
+      <div class="guide-grid">
+        <article>
+          <h3>1. 貼上研究內容</h3>
+          <p>建議包含研究主題、資料來源、研究架構、研究流程、核心分析、研究輸出與限制。文字不必完全格式化，本地引擎會先整理成初稿。</p>
+        </article>
+        <article>
+          <h3>2. 先出圖，再修圖</h3>
+          <p>按下 AI 解析後會先用瀏覽器內建分析器立即生成。若有設定 Python 或線上 API，系統只會在背景補充建議，不會卡住畫布。</p>
+        </article>
+        <article>
+          <h3>3. 自由編輯模組與線條</h3>
+          <p>點選模組可拖曳、改文字與改類型。開啟「新增線條」後，依序點兩個模組即可建立連接；點線條可修改標籤與樣式。</p>
+        </article>
+        <article>
+          <h3>4. 匯出與發表</h3>
+          <p>完成後可匯出 SVG、PNG 或 JSON。SVG 適合進一步放到 PowerPoint、Illustrator 或 Canva 裡微調。</p>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
