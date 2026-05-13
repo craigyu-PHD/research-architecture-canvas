@@ -1,4 +1,5 @@
 const svgNS = "http://www.w3.org/2000/svg";
+const storageVersion = "2026-05-13-v3";
 
 const sampleText = `研究主題：AI 輔助決策下數位治理與民權保障之研究
 副標題：從文獻綜述、制度分析到政策建議的研究圖
@@ -129,12 +130,14 @@ let state = {
   canvas: { width: 1400, height: 1800 },
   nodes: [],
   edges: [],
+  legend: {},
   flow: "文字輸入 → 選擇圖表類型 → AI 初稿 → 人工修圖 → 匯出",
   suggestions: [],
 };
 
 let selected = { kind: null, id: null };
 let zoom = 1;
+let panOffset = { x: 0, y: 0 };
 let snapToGrid = true;
 let lineMode = false;
 let pendingLineSource = null;
@@ -142,6 +145,7 @@ let currentEdgePreset = { line: "curved", style: "solid", arrow: "end" };
 let dragNode = null;
 let panDrag = null;
 let inlineEditor = null;
+let pendingExportMode = "export";
 
 const els = {};
 
@@ -167,8 +171,6 @@ function bindElements() {
     "loadSampleBtn",
     "analyzeBtn",
     "clearInputBtn",
-    "analysisPrimary",
-    "analysisSecondary",
     "diagramTypeGrid",
     "shapeGrid",
     "arrowGrid",
@@ -184,29 +186,24 @@ function bindElements() {
     "shrinkCanvasBtn",
     "autoArrangeBtn",
     "snapToggleBtn",
+    "snapStateText",
     "resetCanvasBtn",
     "exportSvgBtn",
     "exportPngBtn",
     "exportJsonBtn",
     "importJsonInput",
-    "suggestions",
-    "suggestionCount",
-    "emptyInspector",
-    "nodeInspectorForm",
-    "edgeInspectorForm",
-    "nodeTitleInput",
-    "nodeBodyInput",
-    "nodeShapeInput",
-    "nodePaletteInput",
-    "nodeWidthInput",
-    "nodeHeightInput",
-    "edgeLabelInput",
-    "edgeLineInput",
-    "edgeStyleInput",
-    "edgeArrowInput",
+    "legendEditor",
     "diagramTitleInput",
     "diagramSubtitleInput",
     "diagramFlowInput",
+    "exportDialog",
+    "exportDialogTitle",
+    "exportFilenameInput",
+    "exportFormatInput",
+    "exportDialogNote",
+    "confirmExportBtn",
+    "cancelExportBtn",
+    "closeExportDialogBtn",
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
@@ -216,7 +213,7 @@ function bindEvents() {
   els.canvasTabBtn.addEventListener("click", () => setView("canvas"));
   els.helpTabBtn.addEventListener("click", () => setView("help"));
   els.themeToggleBtn.addEventListener("click", toggleTheme);
-  els.saveLocalBtn.addEventListener("click", saveLocal);
+  els.saveLocalBtn.addEventListener("click", () => openExportDialog("json", "draft"));
   els.leftRailToggle.addEventListener("click", () => togglePanel("left"));
   els.rightRailToggle.addEventListener("click", () => togglePanel("right"));
 
@@ -225,7 +222,7 @@ function bindEvents() {
   });
   els.clearInputBtn.addEventListener("click", () => {
     els.researchInput.value = "";
-    setAnalysisStatus("待輸入", "先填文字，再選圖表類型，最後生成。");
+    showToast("文字已清空。");
   });
   els.analyzeBtn.addEventListener("click", analyzeInput);
 
@@ -267,17 +264,10 @@ function bindEvents() {
   els.exportPngBtn.addEventListener("click", exportPng);
   els.exportJsonBtn.addEventListener("click", exportJson);
   els.importJsonInput.addEventListener("change", importJson);
-
-  els.nodeTitleInput.addEventListener("input", updateSelectedNodeFromInspector);
-  els.nodeBodyInput.addEventListener("input", updateSelectedNodeFromInspector);
-  els.nodeShapeInput.addEventListener("change", updateSelectedNodeFromInspector);
-  els.nodePaletteInput.addEventListener("change", updateSelectedNodeFromInspector);
-  els.nodeWidthInput.addEventListener("input", updateSelectedNodeFromInspector);
-  els.nodeHeightInput.addEventListener("input", updateSelectedNodeFromInspector);
-  els.edgeLabelInput.addEventListener("input", updateSelectedEdgeFromInspector);
-  els.edgeLineInput.addEventListener("change", updateSelectedEdgeFromInspector);
-  els.edgeStyleInput.addEventListener("change", updateSelectedEdgeFromInspector);
-  els.edgeArrowInput.addEventListener("change", updateSelectedEdgeFromInspector);
+  els.confirmExportBtn.addEventListener("click", confirmExport);
+  els.cancelExportBtn.addEventListener("click", closeExportDialog);
+  els.closeExportDialogBtn.addEventListener("click", closeExportDialog);
+  els.exportDialog.addEventListener("cancel", closeExportDialog);
 
   els.diagramTitleInput.addEventListener("input", () => {
     state.title = els.diagramTitleInput.value;
@@ -321,7 +311,7 @@ function loadInitialState() {
     els.themeToggleBtn.textContent = theme === "dark" ? "正常模式" : "暗黑模式";
   }
   const stored = localStorage.getItem("research-canvas-state");
-  if (stored) {
+  if (stored && localStorage.getItem("research-canvas-version") === storageVersion) {
     try {
       state = normalizeState(JSON.parse(stored));
       els.researchInput.value = localStorage.getItem("research-canvas-input") || "";
@@ -341,13 +331,16 @@ function analyzeInput() {
     return;
   }
   const started = performance.now();
-  setAnalysisStatus("本地解析中", "正在依圖表類型整理版面");
+  els.analyzeBtn.disabled = true;
+  els.analyzeBtn.textContent = "生成中...";
   requestAnimationFrame(() => {
     const parsed = parseResearchText(text);
     state = buildDiagram(parsed, state.diagramType);
     selected = { kind: null, id: null };
     ensureCanvasFits();
-    setAnalysisStatus(`本地已完成 ${Math.round(performance.now() - started)}ms`, diagramTypes[state.diagramType].flowHint);
+    els.analyzeBtn.disabled = false;
+    els.analyzeBtn.textContent = "生成圖稿";
+    showToast(`圖稿已生成，耗時 ${Math.round(performance.now() - started)}ms。`);
     saveLocal(false);
     render();
   });
@@ -392,6 +385,7 @@ function buildDiagram(parsed, diagramType) {
     canvas: { width: 1400, height: 1800 },
     nodes: [],
     edges: [],
+    legend: {},
     flow: "",
     suggestions: buildSuggestions(parsed, diagramType),
   };
@@ -420,6 +414,55 @@ function buildDiagram(parsed, diagramType) {
   }
   base.flow = base.nodes.map((node) => node.title).join(" → ");
   return base;
+}
+
+function createProfessionalTemplate(diagramType) {
+  const nodes = [
+    templateNode("problem", 1, "研究問題界定", "釐清研究目的、核心問題與範圍", "pill", "process", 120, 250, 250, 96),
+    templateNode("literature", 2, "文獻綜述與理論框架", "整理概念、缺口與可操作化變項", "document", "reference", 430, 205, 320, 120),
+    templateNode("framework", 3, "概念架構與研究命題", "形成變項關係、命題與分析焦點", "ellipse", "concept", 835, 240, 310, 112),
+    templateNode("data", 4, "資料來源與樣本", "文本、政策文件、案例或訪談資料", "parallelogram", "data", 170, 520, 310, 112),
+    templateNode("method", 5, "方法設計與分析策略", "編碼、比較、模型或詮釋分析", "hexagon", "method", 565, 510, 330, 122),
+    templateNode("check", 6, "信度效度與倫理檢核", "資料品質、研究倫理與偏誤修正", "diamond", "decision", 960, 500, 230, 170),
+    templateNode("output", 7, "研究發現與政策建議", "理論貢獻、實務建議與後續研究", "pill", "output", 485, 815, 350, 104),
+  ];
+  const edges = [
+    templateEdge("problem", "literature", "", "curved", "solid", "end"),
+    templateEdge("literature", "framework", "", "curved", "solid", "end"),
+    templateEdge("framework", "data", "操作化", "curved", "solid", "end"),
+    templateEdge("data", "method", "", "curved", "solid", "end"),
+    templateEdge("method", "check", "", "curved", "solid", "end"),
+    templateEdge("check", "output", "通過", "curved", "solid", "end"),
+    templateEdge("check", "method", "修正設計", "curved", "feedback", "end"),
+    templateEdge("output", "problem", "形成新問題", "curved", "dashed", "end"),
+  ];
+  return {
+    diagramType,
+    title: "學術研究設計與方法流程圖",
+    subtitle: "問題、文獻、架構、資料、方法、檢核與輸出的迭代研究圖",
+    canvas: { width: 1400, height: 1180 },
+    nodes,
+    edges,
+    legend: {
+      [legendKey("pill", "process")]: "研究起點",
+      [legendKey("document", "reference")]: "文獻與理論",
+      [legendKey("ellipse", "concept")]: "概念架構",
+      [legendKey("parallelogram", "data")]: "資料來源",
+      [legendKey("hexagon", "method")]: "方法設計",
+      [legendKey("diamond", "decision")]: "檢核判斷",
+      [legendKey("pill", "output")]: "研究輸出",
+    },
+    flow: "研究問題界定 → 文獻綜述與理論框架 → 概念架構與研究命題 → 資料來源與樣本 → 方法設計與分析策略 → 信度效度與倫理檢核 → 研究發現與政策建議 ↺ 回頭修正",
+    suggestions: [],
+  };
+}
+
+function templateNode(id, number, title, body, shape, palette, x, y, w, h) {
+  return { id: `tpl-${id}`, number, title, body, shape, palette, x, y, w, h };
+}
+
+function templateEdge(from, to, label, line, style, arrow) {
+  return { id: `tpl-edge-${from}-${to}`, from: `tpl-${from}`, to: `tpl-${to}`, label, line, style, arrow };
 }
 
 function chooseSteps(parsed, diagramType) {
@@ -589,9 +632,7 @@ function render() {
   svg.setAttribute("viewBox", `0 0 ${state.canvas.width} ${state.canvas.height}`);
   svg.setAttribute("width", state.canvas.width);
   svg.setAttribute("height", state.canvas.height);
-  svg.style.transform = `scale(${zoom})`;
-  els.zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
-  els.zoomSlider.value = Math.round(zoom * 100);
+  applyCanvasTransform();
   addDefs(svg);
   drawBackground(svg);
   drawTitle(svg);
@@ -599,11 +640,17 @@ function render() {
   state.nodes.forEach((node) => drawNode(svg, node));
   drawLegend(svg);
   drawFlow(svg);
-  renderSuggestions();
-  renderInspector();
+  renderLegendEditor();
   syncDiagramInputs();
   updateLineModeUi();
+  updateSnapUi();
   saveLocal(false);
+}
+
+function applyCanvasTransform() {
+  els.diagramCanvas.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`;
+  els.zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  els.zoomSlider.value = Math.round(zoom * 100);
 }
 
 function addDefs(svg) {
@@ -773,37 +820,48 @@ function nodeTextColor(node, part) {
 }
 
 function drawLegend(svg) {
+  const items = buildLegendItems();
+  if (!items.length) return;
   const x = state.canvas.width - 300;
   const y = 590;
-  drawPanel(svg, x, y, 240, 300, "圖例");
-  const items = [
-    ["rounded", "處理"],
-    ["diamond", "判斷"],
-    ["parallelogram", "資料"],
-    ["ellipse", "概念"],
-    ["pill", "起訖/輸出"],
-  ];
-  items.forEach(([shape, label], index) => {
-    const node = { x: x + 24, y: y + 54 + index * 44, w: 56, h: 28, shape, palette: shape === "diamond" ? "decision" : "process" };
+  const height = Math.max(112, 62 + items.length * 44);
+  drawPanel(svg, x, y, 240, height, "圖例");
+  items.forEach((item, index) => {
+    const rowY = y + 54 + index * 44;
+    const node = { x: x + 24, y: rowY, w: 56, h: 28, shape: item.shape, palette: item.palette };
     const g = svgEl("g");
-    drawShape(g, node, palettes[node.palette]);
+    drawShape(g, node, palettes[item.palette] || palettes.process);
+    g.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openLegendInlineEditor(item, { x: x + 91, y: rowY - 4, w: 122, h: 34 });
+    });
     svg.appendChild(g);
-    svg.appendChild(svgText(label, x + 96, y + 74 + index * 44, { "font-size": 13, "font-weight": 800, fill: "var(--svg-ink)" }));
+    const text = svgText(item.label, x + 96, rowY + 20, { "font-size": 13, "font-weight": 800, fill: "var(--svg-ink)", cursor: "text" });
+    text.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openLegendInlineEditor(item, { x: x + 91, y: rowY - 4, w: 122, h: 34 });
+    });
+    svg.appendChild(text);
   });
 }
 
 function drawFlow(svg) {
   const x = 70;
-  const y = state.canvas.height - 80;
   const w = state.canvas.width - 140;
+  const maxChars = Math.max(12, Math.floor((w - 115) / (15 * 0.62)));
+  const lines = wrapText(state.flow || "", maxChars, 8);
+  const h = Math.max(54, 34 + lines.length * 21);
+  const y = state.canvas.height - h - 26;
   const group = svgEl("g", { cursor: "text" });
-  group.appendChild(svgEl("rect", { x, y, width: w, height: 54, rx: 8, fill: "var(--canvas)", stroke: "var(--svg-ink)", "stroke-width": 1.5, "stroke-dasharray": "7 5" }));
+  group.appendChild(svgEl("rect", { x, y, width: w, height: h, rx: 8, fill: "var(--canvas)", stroke: "var(--svg-ink)", "stroke-width": 1.5, "stroke-dasharray": "7 5" }));
   group.appendChild(svgText("Flow:", x + 28, y + 35, { "font-size": 18, "font-weight": 850, fill: "var(--svg-ink)" }));
-  appendWrappedText(group, state.flow || "", x + 90, y + 35, w - 115, { "font-size": 15, "font-weight": 760, fill: "var(--svg-ink)" }, 1, "start");
+  appendWrappedText(group, state.flow || "", x + 90, y + 35, w - 115, { "font-size": 15, "font-weight": 760, fill: "var(--svg-ink)" }, 8, "start");
   group.addEventListener("dblclick", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    openFlowInlineEditor({ x: x + 88, y: y + 9, w: w - 110, h: 38 });
+    openFlowInlineEditor({ x: x + 88, y: y + 9, w: w - 110, h: h - 16 });
   });
   svg.appendChild(group);
 }
@@ -850,8 +908,8 @@ function startCanvasPan(event) {
   panDrag = {
     startX: event.clientX,
     startY: event.clientY,
-    left: els.canvasScroll.scrollLeft,
-    top: els.canvasScroll.scrollTop,
+    x: panOffset.x,
+    y: panOffset.y,
     moved: false,
     hadSelection,
   };
@@ -869,9 +927,10 @@ function onDocumentMouseMove(event) {
     return;
   }
   if (panDrag) {
-    els.canvasScroll.scrollLeft = panDrag.left - (event.clientX - panDrag.startX);
-    els.canvasScroll.scrollTop = panDrag.top - (event.clientY - panDrag.startY);
+    panOffset.x = panDrag.x + (event.clientX - panDrag.startX);
+    panOffset.y = panDrag.y + (event.clientY - panDrag.startY);
     panDrag.moved = true;
+    applyCanvasTransform();
   }
 }
 
@@ -934,6 +993,16 @@ function openFlowInlineEditor(rect) {
   });
 }
 
+function openLegendInlineEditor(item, rect) {
+  openInlineEditor({
+    value: item.label,
+    rect,
+    commit: (value) => {
+      setLegendLabel(item.key, value.trim() || item.defaultLabel);
+    },
+  });
+}
+
 function openInlineEditor({ value, rect, commit }) {
   closeInlineEditor(false);
   const svgRect = els.diagramCanvas.getBoundingClientRect();
@@ -968,50 +1037,33 @@ function closeInlineEditor(commit) {
   render();
 }
 
-function renderSuggestions() {
-  const suggestions = (state.suggestions || []).slice(0, 3);
-  els.suggestionCount.textContent = suggestions.length;
-  els.suggestions.innerHTML = "";
-  if (!suggestions.length) {
+function renderLegendEditor() {
+  if (!els.legendEditor) return;
+  const items = buildLegendItems();
+  els.legendEditor.innerHTML = "";
+  if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "生成圖稿後，這裡只會保留最重要的三則建議。";
-    els.suggestions.appendChild(empty);
+    empty.textContent = "目前畫布沒有可產生圖例的圖框。";
+    els.legendEditor.appendChild(empty);
     return;
   }
-  suggestions.forEach((suggestion) => {
-    const card = document.createElement("article");
-    card.className = "suggestion-card";
-    card.dataset.level = suggestion.level || "info";
-    const title = document.createElement("strong");
-    title.textContent = suggestion.title;
-    const body = document.createElement("p");
-    body.textContent = suggestion.body;
-    card.append(title, body);
-    els.suggestions.appendChild(card);
+  items.forEach((item) => {
+    const row = document.createElement("label");
+    row.className = "legend-row";
+    const swatch = document.createElement("span");
+    swatch.className = `legend-swatch ${item.shape}`;
+    swatch.style.setProperty("--swatch-fill", (palettes[item.palette] || palettes.process).fill);
+    swatch.style.setProperty("--swatch-stroke", (palettes[item.palette] || palettes.process).stroke);
+    const input = document.createElement("input");
+    input.value = item.label;
+    input.addEventListener("change", () => {
+      setLegendLabel(item.key, input.value.trim() || item.defaultLabel);
+      render();
+    });
+    row.append(swatch, input);
+    els.legendEditor.appendChild(row);
   });
-}
-
-function renderInspector() {
-  const node = selected.kind === "node" ? selectedNode() : null;
-  const edge = selected.kind === "edge" ? selectedEdge() : null;
-  els.emptyInspector.classList.toggle("hidden", Boolean(node || edge));
-  els.nodeInspectorForm.classList.toggle("hidden", !node);
-  els.edgeInspectorForm.classList.toggle("hidden", !edge);
-  if (node) {
-    if (document.activeElement !== els.nodeTitleInput) els.nodeTitleInput.value = node.title;
-    if (document.activeElement !== els.nodeBodyInput) els.nodeBodyInput.value = node.body;
-    if (document.activeElement !== els.nodeShapeInput) els.nodeShapeInput.value = node.shape;
-    if (document.activeElement !== els.nodePaletteInput) els.nodePaletteInput.value = node.palette;
-    if (document.activeElement !== els.nodeWidthInput) els.nodeWidthInput.value = Math.round(node.w);
-    if (document.activeElement !== els.nodeHeightInput) els.nodeHeightInput.value = Math.round(node.h);
-  }
-  if (edge) {
-    if (document.activeElement !== els.edgeLabelInput) els.edgeLabelInput.value = edge.label || "";
-    if (document.activeElement !== els.edgeLineInput) els.edgeLineInput.value = edge.line || "curved";
-    if (document.activeElement !== els.edgeStyleInput) els.edgeStyleInput.value = edge.style || "solid";
-    if (document.activeElement !== els.edgeArrowInput) els.edgeArrowInput.value = edge.arrow || "end";
-  }
 }
 
 function syncDiagramInputs() {
@@ -1020,36 +1072,12 @@ function syncDiagramInputs() {
   if (document.activeElement !== els.diagramFlowInput) els.diagramFlowInput.value = state.flow || "";
 }
 
-function updateSelectedNodeFromInspector() {
-  const node = selectedNode();
-  if (!node) return;
-  node.title = els.nodeTitleInput.value;
-  node.body = els.nodeBodyInput.value;
-  node.shape = els.nodeShapeInput.value;
-  node.palette = els.nodePaletteInput.value;
-  node.w = clamp(Number(els.nodeWidthInput.value) || node.w, 80, 900);
-  node.h = clamp(Number(els.nodeHeightInput.value) || node.h, 60, 520);
-  rebuildFlow();
-  ensureCanvasFits();
-  render();
-}
-
-function updateSelectedEdgeFromInspector() {
-  const edge = selectedEdge();
-  if (!edge) return;
-  edge.label = els.edgeLabelInput.value;
-  edge.line = els.edgeLineInput.value;
-  edge.style = els.edgeStyleInput.value;
-  edge.arrow = els.edgeArrowInput.value;
-  render();
-}
-
 function setDiagramType(type, shouldRender = true) {
   state.diagramType = diagramTypes[type] ? type : "flowchart";
   els.diagramTypeGrid.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("active", button.dataset.diagram === state.diagramType);
   });
-  els.analysisSecondary.textContent = diagramTypes[state.diagramType].flowHint;
+  els.analyzeBtn.title = diagramTypes[state.diagramType].flowHint;
   if (shouldRender) render();
 }
 
@@ -1089,18 +1117,9 @@ function autoArrange() {
 
 function resetCanvas(confirmFirst = true) {
   if (confirmFirst && !window.confirm("確定要重置畫布？目前圖稿會清除。")) return;
-  const parsed = {
-    title: "學術研究的 AI 畫布",
-    subtitle: diagramTypes[state.diagramType].label,
-    inputItems: [],
-    frameworkSteps: [],
-    flowSteps: ["文字輸入框", "選擇圖表類型", "AI 生成初稿", "人工調整圖框與箭頭", "匯出圖檔"],
-    coreSteps: [],
-    outputs: [],
-    notes: [],
-  };
-  state = buildDiagram(parsed, state.diagramType);
+  state = createProfessionalTemplate(state.diagramType);
   selected = { kind: null, id: null };
+  panOffset = { x: 0, y: 0 };
   render();
 }
 
@@ -1123,6 +1142,32 @@ function selectedNode() {
 
 function selectedEdge() {
   return state.edges.find((edge) => edge.id === selected.id) || null;
+}
+
+function buildLegendItems() {
+  const seen = new Set();
+  return state.nodes.reduce((items, node) => {
+    const key = legendKey(node.shape, node.palette);
+    if (seen.has(key)) return items;
+    seen.add(key);
+    const defaultLabel = shapeLabels[node.shape] || "圖框";
+    items.push({
+      key,
+      shape: node.shape,
+      palette: node.palette,
+      defaultLabel,
+      label: state.legend?.[key] || defaultLabel,
+    });
+    return items;
+  }, []);
+}
+
+function legendKey(shape, palette) {
+  return `${shape}:${palette}`;
+}
+
+function setLegendLabel(key, label) {
+  state.legend = { ...(state.legend || {}), [key]: label };
 }
 
 function rebuildFlow() {
@@ -1164,7 +1209,9 @@ function setZoom(next) {
 
 function fitToView() {
   const widthZoom = (els.canvasScroll.clientWidth - 60) / state.canvas.width;
-  setZoom(clamp(widthZoom, 0.35, 1));
+  zoom = clamp(widthZoom, 0.35, 1);
+  panOffset = { x: 0, y: 0 };
+  render();
 }
 
 function togglePanel(side) {
@@ -1175,8 +1222,14 @@ function togglePanel(side) {
 
 function toggleSnap() {
   snapToGrid = !snapToGrid;
-  els.snapToggleBtn.textContent = `吸附網格：${snapToGrid ? "開" : "關"}`;
+  updateSnapUi();
+}
+
+function updateSnapUi() {
+  els.snapToggleBtn.classList.toggle("active", snapToGrid);
+  els.snapToggleBtn.classList.toggle("dim", !snapToGrid);
   els.snapToggleBtn.setAttribute("aria-pressed", String(snapToGrid));
+  els.snapStateText.textContent = snapToGrid ? "啟用" : "關閉";
 }
 
 function updateArrowButtons(activeButton) {
@@ -1195,39 +1248,157 @@ function updateLineModeUi() {
 }
 
 function setAnalysisStatus(primary, secondary) {
-  els.analysisPrimary.textContent = primary;
-  els.analysisSecondary.textContent = secondary;
+  if (primary) showToast(secondary ? `${primary}：${secondary}` : primary);
 }
 
 function exportSvg() {
-  const clone = els.diagramCanvas.cloneNode(true);
-  clone.removeAttribute("style");
-  downloadBlob(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml;charset=utf-8" }), "academic-research-ai-canvas.svg");
+  openExportDialog("svg", "export");
 }
 
 function exportPng() {
-  const clone = els.diagramCanvas.cloneNode(true);
-  clone.removeAttribute("style");
-  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml;charset=utf-8" }));
-  const image = new Image();
-  image.onload = () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = state.canvas.width * 2;
-    canvas.height = state.canvas.height * 2;
-    const context = canvas.getContext("2d");
-    context.fillStyle = getComputedStyle(document.body).getPropertyValue("--canvas").trim() || "#fff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      URL.revokeObjectURL(url);
-      if (blob) downloadBlob(blob, "academic-research-ai-canvas.png");
-    }, "image/png");
-  };
-  image.src = url;
+  openExportDialog("png", "export");
 }
 
 function exportJson() {
-  downloadBlob(new Blob([JSON.stringify(state, null, 2)], { type: "application/json;charset=utf-8" }), "academic-research-ai-canvas.json");
+  openExportDialog("json", "export");
+}
+
+function openExportDialog(format = "json", mode = "export") {
+  pendingExportMode = mode;
+  if (els.exportDialog.open) closeExportDialog();
+  els.exportDialogTitle.textContent = mode === "draft" ? "儲存草稿" : "匯出圖稿";
+  els.exportFormatInput.value = format;
+  els.exportFilenameInput.value = baseFileName();
+  els.exportDialogNote.textContent = mode === "draft"
+    ? "JSON 草稿可以之後重新匯入編輯；支援時會開啟系統儲存視窗。"
+    : "可改選 SVG、PNG 或 JSON；支援時會開啟系統儲存視窗。";
+  if (typeof els.exportDialog.showModal === "function") {
+    els.exportDialog.showModal();
+  } else {
+    els.exportDialog.setAttribute("open", "");
+  }
+  els.exportFilenameInput.focus();
+  els.exportFilenameInput.select();
+}
+
+function closeExportDialog() {
+  els.exportDialog.close?.();
+  els.exportDialog.removeAttribute("open");
+}
+
+async function confirmExport() {
+  const format = els.exportFormatInput.value;
+  const filename = ensureExtension(els.exportFilenameInput.value || baseFileName(), format);
+  els.confirmExportBtn.disabled = true;
+  els.confirmExportBtn.textContent = "選擇位置...";
+  try {
+    const target = await chooseSaveTarget(filename, format);
+    if (target.kind === "cancelled") return;
+    els.confirmExportBtn.textContent = "準備中...";
+    const blob = await buildExportBlob(format);
+    const result = await writeSaveTarget(target, blob, filename);
+    saveLocal(false);
+    closeExportDialog();
+    showToast(result === "picker" ? "已儲存到指定位置。" : "瀏覽器已開始下載。");
+  } catch (error) {
+    console.error(error);
+    showToast("儲存失敗，請改用其他格式。");
+  } finally {
+    els.confirmExportBtn.disabled = false;
+    els.confirmExportBtn.textContent = "選擇位置並儲存";
+  }
+}
+
+async function buildExportBlob(format) {
+  if (format === "json") {
+    return new Blob([JSON.stringify(state, null, 2)], { type: "application/json;charset=utf-8" });
+  }
+  if (format === "svg") {
+    return new Blob([serializedSvg()], { type: "image/svg+xml;charset=utf-8" });
+  }
+  return buildPngBlob();
+}
+
+function serializedSvg() {
+  const clone = els.diagramCanvas.cloneNode(true);
+  clone.removeAttribute("style");
+  clone.setAttribute("xmlns", svgNS);
+  inlineSvgVars(clone);
+  return new XMLSerializer().serializeToString(clone);
+}
+
+function inlineSvgVars(root) {
+  const computed = getComputedStyle(document.body);
+  const replacements = {
+    "var(--canvas)": computed.getPropertyValue("--canvas").trim() || "#fff",
+    "var(--grid)": computed.getPropertyValue("--grid").trim() || "#eef0ef",
+    "var(--svg-ink)": computed.getPropertyValue("--svg-ink").trim() || "#171a1c",
+    "var(--svg-muted)": computed.getPropertyValue("--svg-muted").trim() || "#58636c",
+    "var(--panel-border)": computed.getPropertyValue("--panel-border").trim() || "#ccd6df",
+  };
+  root.querySelectorAll("*").forEach((el) => {
+    ["fill", "stroke"].forEach((attr) => {
+      const value = el.getAttribute(attr);
+      if (!value) return;
+      el.setAttribute(attr, replacements[value] || value);
+    });
+  });
+}
+
+function buildPngBlob() {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([serializedSvg()], { type: "image/svg+xml;charset=utf-8" }));
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = state.canvas.width * 2;
+      canvas.height = state.canvas.height * 2;
+      const context = canvas.getContext("2d");
+      context.fillStyle = getComputedStyle(document.body).getPropertyValue("--canvas").trim() || "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(url);
+        blob ? resolve(blob) : reject(new Error("PNG export failed"));
+      }, "image/png");
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("SVG image load failed"));
+    };
+    image.src = url;
+  });
+}
+
+async function chooseSaveTarget(filename, format) {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [filePickerType(format)],
+      });
+      return { kind: "picker", handle };
+    } catch (error) {
+      if (error?.name === "AbortError") return { kind: "cancelled" };
+      console.warn("Native save picker failed, falling back to download.", error);
+    }
+  }
+  return { kind: "download" };
+}
+
+async function writeSaveTarget(target, blob, filename) {
+  if (target.kind === "picker") {
+    try {
+      const writable = await target.handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return "picker";
+    } catch (error) {
+      console.warn("Native write failed, falling back to download.", error);
+    }
+  }
+  downloadBlob(blob, filename);
+  return "download";
 }
 
 function importJson(event) {
@@ -1251,6 +1422,7 @@ function importJson(event) {
 function saveLocal(showMessage = true) {
   localStorage.setItem("research-canvas-state", JSON.stringify(state));
   localStorage.setItem("research-canvas-input", els.researchInput.value);
+  localStorage.setItem("research-canvas-version", storageVersion);
   if (showMessage) showToast("已儲存到此瀏覽器。");
 }
 
@@ -1262,6 +1434,7 @@ function normalizeState(input) {
     canvas: input.canvas || { width: 1400, height: 1800 },
     nodes: Array.isArray(input.nodes) ? input.nodes.map(normalizeNode) : [],
     edges: Array.isArray(input.edges) ? input.edges.map(normalizeEdge) : [],
+    legend: input.legend && typeof input.legend === "object" ? input.legend : {},
     flow: input.flow || "",
     suggestions: Array.isArray(input.suggestions) ? input.suggestions.slice(0, 3) : [],
   };
@@ -1460,6 +1633,29 @@ function snap(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function baseFileName() {
+  const title = compact(state.title || "academic-research-ai-canvas")
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 56);
+  return title || "academic-research-ai-canvas";
+}
+
+function ensureExtension(filename, format) {
+  const clean = filename.replace(/\.[a-z0-9]+$/i, "");
+  return `${clean}.${format}`;
+}
+
+function filePickerType(format) {
+  if (format === "svg") {
+    return { description: "SVG 向量圖", accept: { "image/svg+xml": [".svg"] } };
+  }
+  if (format === "png") {
+    return { description: "PNG 圖片", accept: { "image/png": [".png"] } };
+  }
+  return { description: "JSON 可編輯草稿", accept: { "application/json": [".json"] } };
 }
 
 function downloadBlob(blob, filename) {

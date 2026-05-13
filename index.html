@@ -69,10 +69,6 @@
             </div>
           </div>
           <button id="analyzeBtn" class="primary-btn wide" type="button">生成圖稿</button>
-          <div class="analysis-meter" aria-label="分析狀態">
-            <span id="analysisPrimary">待輸入</span>
-            <span id="analysisSecondary">先填文字，再選圖表類型，最後生成。</span>
-          </div>
         </section>
 
         <section class="panel-section">
@@ -119,7 +115,11 @@
           </div>
           <div class="toolbar-group">
             <button id="autoArrangeBtn" class="secondary-btn small vivid" type="button">自動排列</button>
-            <button id="snapToggleBtn" class="secondary-btn small" type="button" aria-pressed="true">吸附網格：開</button>
+            <button id="snapToggleBtn" class="secondary-btn small snap-toggle active" type="button" aria-pressed="true" title="吸附網格">
+              <span class="snap-icon" aria-hidden="true"></span>
+              <span>吸附網格</span>
+              <span id="snapStateText" class="state-text">啟用</span>
+            </button>
             <button id="resetCanvasBtn" class="secondary-btn small danger" type="button">重置畫布</button>
             <button id="exportSvgBtn" class="secondary-btn small" type="button">SVG</button>
             <button id="exportPngBtn" class="secondary-btn small" type="button">PNG</button>
@@ -133,79 +133,15 @@
         </div>
       </section>
 
-      <aside class="panel inspector-panel" aria-label="選取物件屬性">
-        <section class="panel-section compact-suggest">
+      <aside class="panel inspector-panel" aria-label="圖例與圖表文字">
+        <section class="panel-section">
           <div class="section-head">
             <div>
-              <h2>AI 繪圖建議</h2>
-              <p>只保留三則最重要建議。</p>
-            </div>
-            <span id="suggestionCount" class="mini-count">0</span>
-          </div>
-          <div id="suggestions" class="suggestion-list compact"></div>
-        </section>
-
-        <section class="panel-section">
-          <h2>選取物件</h2>
-          <div id="emptyInspector" class="empty-state">點選圖框或箭頭後，可在這裡調整大小、形狀、顏色與線條。</div>
-          <div id="nodeInspectorForm" class="inspector-form hidden">
-            <label>框內標題<input id="nodeTitleInput" type="text"></label>
-            <label>補充文字<textarea id="nodeBodyInput"></textarea></label>
-            <label>形狀
-              <select id="nodeShapeInput">
-                <option value="rounded">處理矩形</option>
-                <option value="pill">起訖圓角</option>
-                <option value="diamond">判斷菱形</option>
-                <option value="circle">圓形節點</option>
-                <option value="ellipse">概念橢圓</option>
-                <option value="triangle">三角形</option>
-                <option value="hexagon">六角形</option>
-                <option value="parallelogram">平行四邊形</option>
-                <option value="document">文件框</option>
-              </select>
-            </label>
-            <label>顏色
-              <select id="nodePaletteInput">
-                <option value="process">流程藍</option>
-                <option value="concept">概念紫</option>
-                <option value="data">資料青</option>
-                <option value="method">方法橙</option>
-                <option value="decision">判斷紅</option>
-                <option value="output">輸出綠</option>
-                <option value="reference">文獻灰綠</option>
-                <option value="warning">限制黃</option>
-              </select>
-            </label>
-            <div class="field-grid">
-              <label>寬<input id="nodeWidthInput" type="number" min="80" max="900"></label>
-              <label>高<input id="nodeHeightInput" type="number" min="60" max="520"></label>
+              <h2>圖例編輯</h2>
+              <p>依畫布上的圖框自動同步，可在這裡修正名稱。</p>
             </div>
           </div>
-          <div id="edgeInspectorForm" class="inspector-form hidden">
-            <label>線條標籤<input id="edgeLabelInput" type="text" placeholder="例如：因果、回饋、引用"></label>
-            <label>線型
-              <select id="edgeLineInput">
-                <option value="curved">曲線</option>
-                <option value="straight">直線</option>
-                <option value="elbow">折線</option>
-              </select>
-            </label>
-            <label>樣式
-              <select id="edgeStyleInput">
-                <option value="solid">實線</option>
-                <option value="dashed">虛線</option>
-                <option value="dotted">點線</option>
-                <option value="feedback">回饋線</option>
-              </select>
-            </label>
-            <label>箭頭
-              <select id="edgeArrowInput">
-                <option value="end">單向</option>
-                <option value="both">雙向</option>
-                <option value="none">無箭頭</option>
-              </select>
-            </label>
-          </div>
+          <div id="legendEditor" class="legend-editor"></div>
         </section>
 
         <section class="panel-section">
@@ -222,40 +158,83 @@
       <div class="help-hero">
         <p class="eyebrow">Guide</p>
         <h2>使用說明</h2>
-        <p>這個工具的核心邏輯是：先貼上研究文字，再選圖表類型，最後讓 AI 生成初稿，並用圖框與箭頭工具人工修正。</p>
+        <p>這個工具不是一次完成，而是用研究流程圖的方式反覆產生、檢查、修正與輸出。</p>
       </div>
-      <div class="help-grid">
-        <article>
-          <h3>1. 先貼研究文字</h3>
-          <p>把研究主題、資料來源、方法、流程、變項、輸出與限制貼到文字輸入框，內容越完整，初稿越容易接近需求。</p>
-        </article>
-        <article>
-          <h3>2. 再選圖表類型</h3>
-          <p>流程圖適合先後步驟，研究架構圖適合概念與變項，方法流程圖適合資料到輸出的管線，時間軸適合階段與事件。</p>
-        </article>
-        <article>
-          <h3>3. 圖框形狀有意義</h3>
-          <p>矩形代表處理，菱形代表判斷，圓角代表起訖，平行四邊形代表資料輸入，文件框代表文獻或產出文件。</p>
-        </article>
-        <article>
-          <h3>4. 箭頭是獨立工具</h3>
-          <p>選擇箭頭模組後，依序點兩個圖框建立連線。線條可改成實線、虛線、回饋線、雙向或無箭頭註記線。</p>
-        </article>
-        <article>
-          <h3>5. 畫布可以拖曳</h3>
-          <p>按住畫布空白處拖曳即可平移。滾輪可上下移動，按住 Ctrl 或 Command 加滾輪可縮放。</p>
-        </article>
-        <article>
-          <h3>6. 直接編輯文字</h3>
-          <p>在圖框上雙擊即可在畫布內直接改標題與說明。底部 Flow 區塊也可以雙擊直接修改。</p>
-        </article>
-        <article>
-          <h3>7. 自動排列與吸附</h3>
-          <p>自動排列會依目前圖表類型重新擺放。吸附網格開啟時，手拉圖框後會自動對齊格線。</p>
-        </article>
+      <div class="help-flow-card">
+        <svg class="help-flow-svg" viewBox="0 0 980 560" role="img" aria-label="使用流程圖">
+          <defs>
+            <marker id="helpArrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+              <path d="M1,1 L10,5.5 L1,10 Z"></path>
+            </marker>
+          </defs>
+          <rect class="help-node input" x="58" y="82" width="160" height="76" rx="12"></rect>
+          <text x="138" y="113">貼上研究文字</text>
+          <text class="sub" x="138" y="139">主題、資料、流程</text>
+
+          <rect class="help-node type" x="290" y="82" width="160" height="76" rx="12"></rect>
+          <text x="370" y="113">選圖表類型</text>
+          <text class="sub" x="370" y="139">流程、架構、方法</text>
+
+          <rect class="help-node ai" x="522" y="82" width="160" height="76" rx="12"></rect>
+          <text x="602" y="113">AI 生成初稿</text>
+          <text class="sub" x="602" y="139">節點與連線</text>
+
+          <path class="help-link" d="M218 120 C242 120 260 120 290 120"></path>
+          <path class="help-link" d="M450 120 C474 120 494 120 522 120"></path>
+
+          <polygon class="help-node decision" points="602,230 696,302 602,374 508,302"></polygon>
+          <text x="602" y="294">判斷是否清楚</text>
+          <text class="sub" x="602" y="322">圖例、箭頭、文字</text>
+          <path class="help-link curved" d="M602 158 C602 184 602 200 602 230"></path>
+
+          <rect class="help-node edit" x="290" y="264" width="160" height="76" rx="12"></rect>
+          <text x="370" y="295">手動修圖</text>
+          <text class="sub" x="370" y="321">拖曳、雙擊、連線</text>
+          <path class="help-link dashed" d="M508 302 C486 302 474 302 450 302"></path>
+          <path class="help-link feedback" d="M370 264 C334 218 310 180 290 132"></path>
+
+          <rect class="help-node export" x="755" y="264" width="160" height="76" rx="12"></rect>
+          <text x="835" y="295">儲存與匯出</text>
+          <text class="sub" x="835" y="321">SVG、PNG、JSON</text>
+          <path class="help-link" d="M696 302 C718 302 730 302 755 302"></path>
+
+          <path class="help-link feedback" d="M835 340 C830 450 172 458 138 158"></path>
+          <text class="loop-label" x="468" y="482">回頭修正：輸出後仍可再匯入 JSON，重新調整架構</text>
+        </svg>
+      </div>
+      <div class="help-grid compact">
+        <article><h3>形狀語意</h3><p>矩形代表處理，菱形代表判斷，圓角代表起訖，平行四邊形代表資料，文件框代表文獻或報告。</p></article>
+        <article><h3>線條語意</h3><p>實線表示主流程，虛線表示補充關聯，曲線與回頭線表示研究過程中的反覆修正。</p></article>
+        <article><h3>畫布操作</h3><p>按住畫布空白處可往任意方向拖曳；圖框可拖曳定位，吸附網格啟用時會自動對齊格線。</p></article>
+        <article><h3>可編輯輸出</h3><p>JSON 可保存完整草稿並重新匯入；SVG 適合論文與簡報；PNG 適合快速分享或貼到文件中。</p></article>
       </div>
     </section>
   </div>
+
+  <dialog id="exportDialog" class="export-dialog">
+    <form method="dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">Save / Export</p>
+          <h2 id="exportDialogTitle">儲存圖稿</h2>
+        </div>
+        <button id="closeExportDialogBtn" class="icon-btn" type="button" aria-label="關閉">×</button>
+      </div>
+      <label class="inline-field">檔名<input id="exportFilenameInput" type="text" value="academic-research-ai-canvas"></label>
+      <label class="inline-field">格式
+        <select id="exportFormatInput">
+          <option value="svg">SVG 向量圖</option>
+          <option value="png">PNG 圖片</option>
+          <option value="json">JSON 可再編輯草稿</option>
+        </select>
+      </label>
+      <p id="exportDialogNote" class="hint">支援時會開啟系統儲存視窗；若瀏覽器不支援，會改用下載。</p>
+      <div class="dialog-actions">
+        <button id="cancelExportBtn" class="secondary-btn" type="button">取消</button>
+        <button id="confirmExportBtn" class="primary-btn" type="button">選擇位置並儲存</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="./app.js"></script>
 </body>
