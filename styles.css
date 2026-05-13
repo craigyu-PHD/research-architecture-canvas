@@ -118,7 +118,7 @@ button {
 .secondary-btn,
 .ghost-btn,
 .icon-btn,
-.text-btn,
+.sample-btn,
 .diagram-type-grid button,
 .shape-grid button,
 .arrow-grid button {
@@ -252,10 +252,19 @@ body[data-theme="dark"] .snap-toggle.active {
   border-color: rgba(188, 31, 58, 0.36);
 }
 
-.text-btn {
-  padding: 0 3px;
+.sample-btn {
+  display: grid;
+  place-items: center;
+  min-width: 54px;
+  min-height: 46px;
+  padding: 5px 9px;
+  border: 1px solid rgba(35, 87, 255, 0.22);
+  border-radius: 8px;
+  background: #edf3ff;
   color: var(--primary);
-  background: transparent;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.12;
 }
 
 .workspace {
@@ -469,9 +478,13 @@ body[data-theme="dark"] .diagram-type-grid button.active {
   line-height: 1.35;
 }
 
-.shape-grid,
-.arrow-grid {
+.shape-grid {
   grid-template-columns: repeat(2, minmax(126px, 1fr));
+  margin-top: 10px;
+}
+
+.arrow-grid {
+  grid-template-columns: 1fr;
   margin-top: 10px;
 }
 
@@ -488,6 +501,11 @@ body[data-theme="dark"] .diagram-type-grid button.active {
   font-size: 13px;
   font-weight: 760;
   text-align: left;
+}
+
+.arrow-grid button {
+  justify-content: flex-start;
+  min-height: 42px;
 }
 
 .arrow-grid button.active {
@@ -522,15 +540,13 @@ body[data-theme="dark"] .arrow-grid button.active {
 }
 
 .shape-sample.diamond {
-  width: 28px;
-  height: 28px;
-  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-  transform: none;
-  border: 0;
+  width: 23px;
+  height: 23px;
+  transform: rotate(45deg);
+  border: 2px solid #e11d48;
   border-color: #e11d48;
   background: #ffe8ed;
-  outline: 2px solid #e11d48;
-  outline-offset: -2px;
+  border-radius: 3px;
 }
 
 .shape-sample.circle {
@@ -549,13 +565,11 @@ body[data-theme="dark"] .arrow-grid button.active {
 }
 
 .shape-sample.triangle {
-  width: 31px;
-  height: 28px;
+  width: 30px;
+  height: 25px;
   border: 0;
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
   background: #fff8d8;
-  outline: 2px solid #d97706;
-  outline-offset: -2px;
 }
 
 .shape-sample.hexagon,
@@ -569,8 +583,6 @@ body[data-theme="dark"] .arrow-grid button.active {
   transform: none;
   clip-path: polygon(18% 0, 100% 0, 82% 100%, 0 100%);
   border: 0;
-  outline: 2px solid #f97316;
-  outline-offset: -2px;
 }
 
 .shape-sample.document {
@@ -582,8 +594,98 @@ body[data-theme="dark"] .arrow-grid button.active {
 .shape-sample.hexagon {
   clip-path: polygon(18% 0, 82% 0, 100% 50%, 82% 100%, 18% 100%, 0 50%);
   border: 0;
-  outline: 2px solid #f97316;
-  outline-offset: -2px;
+  background: #fff1db;
+}
+
+.shape-sample.legend {
+  border-radius: 5px;
+  border-style: dashed;
+  border-color: #6b8a20;
+  background: #f8fbf1;
+}
+
+.shape-sample.brace {
+  border: 0;
+  background: transparent;
+  color: #f97316;
+  font-size: 28px;
+  line-height: 20px;
+}
+
+.shape-sample.brace::before {
+  content: "{";
+}
+
+.line-preview {
+  position: relative;
+  width: 52px;
+  height: 18px;
+  flex: 0 0 52px;
+}
+
+.line-preview::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 9px;
+  border-top: 2px solid var(--ink);
+}
+
+.line-preview::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 5px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid var(--ink);
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+
+.line-preview.curved::before,
+.line-preview.feedback::before,
+.line-preview.soft::before {
+  height: 15px;
+  top: 1px;
+  border-top: 0;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0 0 60% 60%;
+}
+
+.line-preview.thin::before {
+  border-top-width: 1px;
+  opacity: 0.7;
+}
+
+.line-preview.elbow::before {
+  width: 40px;
+  height: 11px;
+  border-top: 0;
+  border-left: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  right: auto;
+}
+
+.line-preview.dashed::before {
+  border-top-style: dashed;
+  border-color: var(--accent);
+}
+
+.line-preview.feedback::before {
+  border-bottom-style: dashed;
+  border-color: var(--accent);
+}
+
+.line-preview.feedback::after,
+.line-preview.dashed::after {
+  border-left-color: var(--accent);
+}
+
+.line-preview.soft {
+  border-radius: 999px;
+  background: rgba(35, 87, 255, 0.12);
 }
 
 .canvas-stage {

@@ -1,5 +1,5 @@
 const svgNS = "http://www.w3.org/2000/svg";
-const storageVersion = "2026-05-13-v4";
+const storageVersion = "2026-05-13-v5";
 
 const sampleText = `研究主題：AI 輔助決策下數位治理與民權保障之研究
 副標題：從文獻綜述、制度分析到政策建議的研究圖
@@ -99,6 +99,8 @@ const shapeLabels = {
   hexagon: "六角形",
   parallelogram: "資料輸入",
   document: "文件框",
+  legend: "圖例框",
+  brace: "花括弧",
 };
 
 const keywordMap = {
@@ -141,10 +143,11 @@ let panOffset = { x: 0, y: 0 };
 let snapToGrid = true;
 let lineMode = false;
 let pendingLineSource = null;
-let currentEdgePreset = { line: "curved", style: "solid", arrow: "end" };
+let currentEdgePreset = { line: "curved", style: "solid", arrow: "end", strokeWidth: 2, tone: "ink" };
 let dragNode = null;
 let resizeDrag = null;
 let edgeAnchorDrag = null;
+let edgePointDrag = null;
 let panDrag = null;
 let inlineEditor = null;
 let pendingExportMode = "export";
@@ -256,6 +259,8 @@ function bindEvents() {
       line: button.dataset.line,
       style: button.dataset.style,
       arrow: button.dataset.arrow,
+      strokeWidth: Number(button.dataset.width || 2),
+      tone: button.dataset.tone || "ink",
     };
     lineMode = true;
     pendingLineSource = null;
@@ -466,6 +471,9 @@ function templateEdge(from, to, label, line, style, arrow) {
     arrow,
     fromAnchor: null,
     toAnchor: null,
+    points: [],
+    strokeWidth: style === "feedback" ? 2.4 : 2,
+    tone: style === "dashed" || style === "feedback" ? "accent" : "ink",
   };
 }
 
@@ -625,6 +633,9 @@ function smartEdge(from, to, index, label, line, style) {
     arrow: "end",
     fromAnchor: preferredAnchor(from, to, "from"),
     toAnchor: preferredAnchor(to, from, "to"),
+    points: [],
+    strokeWidth: style === "feedback" ? 2.4 : 2,
+    tone: style === "dashed" || style === "feedback" ? "accent" : "ink",
   };
 }
 
@@ -777,7 +788,7 @@ function drawEdges(svg) {
     if (!from || !to) return;
     const start = edgeAnchorPoint(from, edge.fromAnchor) || anchorPoint(from, to);
     const end = edgeAnchorPoint(to, edge.toAnchor) || anchorPoint(to, from);
-    const path = edgePath(start, end, edge.line);
+    const path = edgePath(start, end, edge.line, edge.points || []);
     const selectedEdge = selected.kind === "edge" && selected.id === edge.id;
     const hit = svgEl("path", { d: path, fill: "none", stroke: "transparent", "stroke-width": 18, cursor: "pointer" });
     hit.addEventListener("mousedown", (event) => {
@@ -786,25 +797,39 @@ function drawEdges(svg) {
       render();
     });
     svg.appendChild(hit);
+    if (edge.tone === "soft") {
+      svg.appendChild(svgEl("path", {
+        d: path,
+        class: "edge-backplate",
+        fill: "none",
+        stroke: "rgba(35, 87, 255, 0.13)",
+        "stroke-width": Math.max(10, Number(edge.strokeWidth || 2) + 8),
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+        "pointer-events": "none",
+      }));
+    }
     const attrs = {
       d: path,
       class: "edge-line",
       "data-edge-line": edge.id,
       fill: "none",
-      stroke: selectedEdge ? "#f97316" : "var(--svg-ink)",
-      "stroke-width": selectedEdge ? 3 : 2,
+      stroke: selectedEdge ? "#f97316" : edgeColor(edge),
+      "stroke-width": selectedEdge ? Math.max(3, Number(edge.strokeWidth || 2) + 0.8) : Number(edge.strokeWidth || 2),
       "stroke-dasharray": dashArray(edge.style),
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
       "pointer-events": "none",
     };
     if (edge.arrow === "end" || edge.arrow === "both") attrs["marker-end"] = "url(#arrowEnd)";
     if (edge.arrow === "both") attrs["marker-start"] = "url(#arrowStart)";
     svg.appendChild(svgEl("path", attrs));
     if (edge.label) drawEdgeLabel(svg, edge.label, start, end);
-    if (selectedEdge) drawEdgeEndpointHandles(svg, edge, start, end);
+    if (selectedEdge) drawEdgeEditHandles(svg, edge, start, end);
   });
 }
 
-function drawEdgeEndpointHandles(svg, edge, start, end) {
+function drawEdgeEditHandles(svg, edge, start, end) {
   [
     ["from", start, "#2563eb"],
     ["to", end, "#f97316"],
@@ -826,6 +851,60 @@ function drawEdgeEndpointHandles(svg, edge, start, end) {
     });
     svg.appendChild(handle);
   });
+  const points = editableEdgePoints(edge, start, end);
+  points.forEach((point, index) => {
+    const handle = svgEl("rect", {
+      class: "edge-point edit-only",
+      x: point.x - 7,
+      y: point.y - 7,
+      width: 14,
+      height: 14,
+      rx: 4,
+      fill: "var(--canvas)",
+      stroke: "#7c3aed",
+      "stroke-width": 2.4,
+      cursor: "move",
+    });
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      ensureEdgePoints(edge, start, end);
+      edgePointDrag = { edgeId: edge.id, index };
+    });
+    svg.appendChild(handle);
+  });
+}
+
+function editableEdgePoints(edge, start, end) {
+  if (Array.isArray(edge.points) && edge.points.length) return edge.points;
+  return defaultEdgeControlPoints(start, end);
+}
+
+function ensureEdgePoints(edge, start, end) {
+  if (Array.isArray(edge.points) && edge.points.length) return;
+  edge.points = defaultEdgeControlPoints(start, end);
+}
+
+function defaultEdgeControlPoints(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    return [
+      { x: start.x + dx * 0.38, y: start.y },
+      { x: start.x + dx * 0.62, y: end.y },
+    ];
+  }
+  return [
+    { x: start.x, y: start.y + dy * 0.38 },
+    { x: end.x, y: start.y + dy * 0.62 },
+  ];
+}
+
+function edgeColor(edge) {
+  if (edge.tone === "accent") return "var(--accent)";
+  if (edge.tone === "muted") return "var(--svg-muted)";
+  if (edge.tone === "soft") return "#2563eb";
+  return "var(--svg-ink)";
 }
 
 function drawEdgeLabel(svg, label, start, end) {
@@ -947,6 +1026,16 @@ function drawShape(group, node, palette) {
   if (node.shape === "document") {
     const wave = 16;
     group.appendChild(svgEl("path", { d: `M ${node.x} ${node.y} H ${node.x + node.w} V ${node.y + node.h - wave} C ${node.x + node.w * 0.72} ${node.y + node.h - wave * 2}, ${node.x + node.w * 0.42} ${node.y + node.h + wave * 0.5}, ${node.x} ${node.y + node.h - wave} Z`, ...attrs }));
+    return;
+  }
+  if (node.shape === "legend") {
+    group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, rx: 10, ...attrs, "stroke-dasharray": "7 5" }));
+    group.appendChild(svgEl("line", { x1: node.x + 18, y1: node.y + 42, x2: node.x + node.w - 18, y2: node.y + 42, stroke: palette.stroke, "stroke-width": 1.4 }));
+    return;
+  }
+  if (node.shape === "brace") {
+    group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, fill: "transparent", stroke: "transparent" }));
+    group.appendChild(svgText("{", node.x + node.w * 0.18, node.y + node.h * 0.82, { "font-size": Math.max(64, node.h * 0.95), "font-weight": 300, fill: palette.stroke }));
     return;
   }
   const rx = node.shape === "pill" ? node.h / 2 : 10;
@@ -1073,10 +1162,25 @@ function onDocumentMouseMove(event) {
   if (edgeAnchorDrag) {
     const edge = state.edges.find((item) => item.id === edgeAnchorDrag.edgeId);
     if (!edge) return;
-    const nodeId = edgeAnchorDrag.end === "from" ? edge.from : edge.to;
-    const node = state.nodes.find((item) => item.id === nodeId);
-    if (!node) return;
-    edge[`${edgeAnchorDrag.end}Anchor`] = pointToBoundaryAnchor(node, clientToSvg(event.clientX, event.clientY));
+    const point = clientToSvg(event.clientX, event.clientY);
+    const otherId = edgeAnchorDrag.end === "from" ? edge.to : edge.from;
+    const targetNode = nearestNodeForPoint(point, otherId) || state.nodes.find((item) => item.id === (edgeAnchorDrag.end === "from" ? edge.from : edge.to));
+    if (!targetNode) return;
+    edge[edgeAnchorDrag.end] = targetNode.id;
+    edge[`${edgeAnchorDrag.end}Anchor`] = pointToBoundaryAnchor(targetNode, point);
+    edge.points = [];
+    render();
+    return;
+  }
+  if (edgePointDrag) {
+    const edge = state.edges.find((item) => item.id === edgePointDrag.edgeId);
+    if (!edge) return;
+    const point = clientToSvg(event.clientX, event.clientY);
+    if (!Array.isArray(edge.points)) edge.points = [];
+    edge.points[edgePointDrag.index] = {
+      x: clamp(point.x, 30, state.canvas.width - 30),
+      y: clamp(point.y, 130, state.canvas.height - 70),
+    };
     render();
     return;
   }
@@ -1111,6 +1215,10 @@ function onDocumentMouseUp() {
   }
   if (edgeAnchorDrag) {
     edgeAnchorDrag = null;
+    render();
+  }
+  if (edgePointDrag) {
+    edgePointDrag = null;
     render();
   }
   if (dragNode) {
@@ -1163,6 +1271,22 @@ function resizeSelectedNode(node, event) {
   node.y = clamp(nextY, 140, state.canvas.height - minH - 100);
   node.w = clamp(nextW, minW, state.canvas.width - node.x - 24);
   node.h = clamp(nextH, minH, state.canvas.height - node.y - 100);
+}
+
+function nearestNodeForPoint(point, excludeId = null) {
+  let best = null;
+  state.nodes.forEach((node) => {
+    if (node.id === excludeId) return;
+    const distance = distanceToNodeRect(point, node);
+    if (!best || distance < best.distance) best = { node, distance };
+  });
+  return best && best.distance <= 90 ? best.node : null;
+}
+
+function distanceToNodeRect(point, node) {
+  const dx = Math.max(node.x - point.x, 0, point.x - (node.x + node.w));
+  const dy = Math.max(node.y - point.y, 0, point.y - (node.y + node.h));
+  return Math.hypot(dx, dy);
 }
 
 function onCanvasWheel(event) {
@@ -1431,8 +1555,8 @@ function addShapeNode(shape, palette) {
     palette,
     x: snap(420),
     y: snap(y),
-    w: shape === "circle" ? 140 : shape === "diamond" ? 180 : 320,
-    h: shape === "circle" ? 140 : shape === "diamond" ? 150 : 110,
+    w: shape === "circle" ? 140 : shape === "diamond" ? 190 : shape === "brace" ? 120 : 320,
+    h: shape === "circle" ? 140 : shape === "diamond" ? 150 : shape === "brace" ? 170 : 110,
   };
   state.nodes.push(node);
   selected = { kind: "node", id: node.id };
@@ -1809,7 +1933,15 @@ function normalizeEdge(edge) {
     arrow: edge.arrow || "end",
     fromAnchor: normalizeAnchor(edge.fromAnchor),
     toAnchor: normalizeAnchor(edge.toAnchor),
+    points: Array.isArray(edge.points) ? edge.points.map(normalizePoint).filter(Boolean) : [],
+    strokeWidth: Number(edge.strokeWidth || 2),
+    tone: edge.tone || "ink",
   };
+}
+
+function normalizePoint(point) {
+  if (!point || typeof point !== "object") return null;
+  return { x: Number(point.x || 0), y: Number(point.y || 0) };
 }
 
 function normalizeAnchor(anchor) {
@@ -1907,7 +2039,17 @@ function pointToBoundaryAnchor(node, point) {
   return { x: localX, y: 1 };
 }
 
-function edgePath(start, end, line) {
+function edgePath(start, end, line, points = []) {
+  const cleanPoints = Array.isArray(points) ? points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) : [];
+  if (cleanPoints.length) {
+    if (line === "curved" && cleanPoints.length >= 2) {
+      return `M ${start.x} ${start.y} C ${cleanPoints[0].x} ${cleanPoints[0].y}, ${cleanPoints[1].x} ${cleanPoints[1].y}, ${end.x} ${end.y}`;
+    }
+    if (line === "curved" && cleanPoints.length === 1) {
+      return `M ${start.x} ${start.y} Q ${cleanPoints[0].x} ${cleanPoints[0].y}, ${end.x} ${end.y}`;
+    }
+    return `M ${start.x} ${start.y} ${cleanPoints.map((point) => `L ${point.x} ${point.y}`).join(" ")} L ${end.x} ${end.y}`;
+  }
   if (line === "straight") return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
   if (line === "elbow") {
     const midY = start.y + (end.y - start.y) / 2;

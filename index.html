@@ -34,7 +34,7 @@
               <h2>文字輸入框</h2>
               <p>貼上研究內容，再選擇要生成的科學圖表類型。</p>
             </div>
-            <button id="loadSampleBtn" class="text-btn" type="button">載入範例</button>
+            <button id="loadSampleBtn" class="sample-btn" type="button"><span>載入</span><span>範例</span></button>
           </div>
           <textarea id="researchInput" spellcheck="false" placeholder="貼上研究主題、資料來源、研究架構、研究流程、方法、核心分析、研究輸出。"></textarea>
           <div class="button-row">
@@ -84,6 +84,8 @@
             <button data-shape="hexagon" data-palette="method" type="button"><span class="shape-sample hexagon"></span>方法六角</button>
             <button data-shape="parallelogram" data-palette="data" type="button"><span class="shape-sample parallelogram"></span>資料輸入</button>
             <button data-shape="document" data-palette="reference" type="button"><span class="shape-sample document"></span>文件/文獻</button>
+            <button data-shape="legend" data-palette="reference" type="button"><span class="shape-sample legend"></span>圖例框</button>
+            <button data-shape="brace" data-palette="method" type="button"><span class="shape-sample brace"></span>花括弧</button>
           </div>
         </section>
 
@@ -91,12 +93,12 @@
           <h2>箭頭模組</h2>
           <p class="hint">先選箭頭，再依序點兩個圖框建立連線。</p>
           <div class="arrow-grid" id="arrowGrid">
-            <button data-line="curved" data-style="solid" data-arrow="end" type="button">單向曲線</button>
-            <button data-line="straight" data-style="solid" data-arrow="end" type="button">單向直線</button>
-            <button data-line="elbow" data-style="solid" data-arrow="end" type="button">折線箭頭</button>
-            <button data-line="curved" data-style="dashed" data-arrow="end" type="button">虛線關聯</button>
-            <button data-line="curved" data-style="feedback" data-arrow="both" type="button">雙向回饋</button>
-            <button data-line="straight" data-style="dotted" data-arrow="none" type="button">註記線</button>
+            <button data-line="curved" data-style="solid" data-arrow="end" data-width="2" data-tone="ink" type="button"><span class="line-preview curved"></span>單向曲線</button>
+            <button data-line="straight" data-style="solid" data-arrow="end" data-width="1.4" data-tone="muted" type="button"><span class="line-preview thin"></span>細直線</button>
+            <button data-line="elbow" data-style="solid" data-arrow="end" data-width="2" data-tone="ink" type="button"><span class="line-preview elbow"></span>折線箭頭</button>
+            <button data-line="curved" data-style="dashed" data-arrow="end" data-width="2" data-tone="accent" type="button"><span class="line-preview dashed"></span>虛線關聯</button>
+            <button data-line="curved" data-style="feedback" data-arrow="both" data-width="2.4" data-tone="accent" type="button"><span class="line-preview feedback"></span>雙向回饋</button>
+            <button data-line="curved" data-style="solid" data-arrow="end" data-width="2" data-tone="soft" type="button"><span class="line-preview soft"></span>背板線</button>
           </div>
           <p id="lineModeHint" class="hint">目前未啟用連線工具。</p>
         </section>
