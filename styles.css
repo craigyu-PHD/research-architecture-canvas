@@ -161,6 +161,11 @@ button {
   font-weight: 900;
 }
 
+.primary-btn.wide {
+  width: 100%;
+  min-height: 42px;
+}
+
 .secondary-btn,
 .ghost-btn,
 .icon-btn,
@@ -235,10 +240,33 @@ body.left-collapsed.right-collapsed .workspace {
 
 .panel {
   min-width: 0;
+  height: calc(100vh - 74px);
+  max-height: calc(100vh - 74px);
   background: var(--panel);
   border-right: 1px solid var(--panel-border);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   transition: opacity 0.16s ease;
+}
+
+.input-panel,
+.inspector-panel {
+  padding-bottom: 28px;
+}
+
+.panel::-webkit-scrollbar {
+  width: 10px;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 48%, transparent);
+}
+
+.panel::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .inspector-panel {
@@ -554,6 +582,8 @@ body[data-theme="dark"] .arrow-grid button.active {
   overflow: auto;
   padding: 28px;
   cursor: grab;
+  overscroll-behavior: contain;
+  user-select: none;
 }
 
 .canvas-scroll.panning {
@@ -562,11 +592,13 @@ body[data-theme="dark"] .arrow-grid button.active {
 
 #diagramCanvas {
   display: block;
+  flex: 0 0 auto;
   width: 1400px;
   height: 1800px;
   background: var(--canvas);
   box-shadow: var(--shadow);
   transform-origin: top left;
+  user-select: none;
 }
 
 .inline-editor {

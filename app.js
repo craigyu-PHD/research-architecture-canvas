@@ -159,7 +159,6 @@ function bindElements() {
     "helpTabBtn",
     "canvasView",
     "helpView",
-    "engineStatus",
     "themeToggleBtn",
     "saveLocalBtn",
     "leftRailToggle",
@@ -226,7 +225,7 @@ function bindEvents() {
   });
   els.clearInputBtn.addEventListener("click", () => {
     els.researchInput.value = "";
-    setAnalysisStatus("待輸入", "先本地生成，不阻塞畫布");
+    setAnalysisStatus("待輸入", "先填文字，再選圖表類型，最後生成。");
   });
   els.analyzeBtn.addEventListener("click", analyzeInput);
 
@@ -708,8 +707,8 @@ function drawNode(svg, node) {
     group.appendChild(svgText(String(node.number), node.x, node.y + 39, { "text-anchor": "middle", "font-size": 18, "font-weight": 850, fill: palette.stroke }));
   }
   const textWidth = node.shape === "diamond" ? node.w * 0.58 : node.shape === "triangle" ? node.w * 0.55 : node.w - 48;
-  appendWrappedText(group, node.title, node.x + node.w / 2, node.y + node.h * 0.43, textWidth, { "text-anchor": "middle", "font-size": 17, "font-weight": 850, fill: "var(--svg-ink)" }, 2);
-  appendWrappedText(group, node.body, node.x + node.w / 2, node.y + node.h * 0.66, textWidth, { "text-anchor": "middle", "font-size": 13, fill: "var(--svg-muted)" }, 2);
+  appendWrappedText(group, node.title, node.x + node.w / 2, node.y + node.h * 0.43, textWidth, { "text-anchor": "middle", "font-size": 17, "font-weight": 850, fill: nodeTextColor(node, "title") }, 2);
+  appendWrappedText(group, node.body, node.x + node.w / 2, node.y + node.h * 0.66, textWidth, { "text-anchor": "middle", "font-size": 13, fill: nodeTextColor(node, "body") }, 2);
   group.addEventListener("mousedown", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -765,6 +764,12 @@ function drawShape(group, node, palette) {
   }
   const rx = node.shape === "pill" ? node.h / 2 : 10;
   group.appendChild(svgEl("rect", { x: node.x, y: node.y, width: node.w, height: node.h, rx, ...attrs }));
+}
+
+function nodeTextColor(node, part) {
+  const darkTextPalettes = new Set(["warning"]);
+  if (darkTextPalettes.has(node.palette)) return part === "title" ? "#1f2937" : "#374151";
+  return part === "title" ? "#111827" : "#344054";
 }
 
 function drawLegend(svg) {
@@ -836,17 +841,21 @@ function handleLineNodeClick(nodeId) {
 }
 
 function startCanvasPan(event) {
-  if (event.target.closest && (event.target.closest(".node") || event.target.closest("path[stroke='transparent']"))) return;
-  if (inlineEditor || lineMode) return;
+  if (event.button !== 0 || inlineEditor || lineMode) return;
+  const target = event.target;
+  if (target.closest?.(".node") || target.closest?.("path[stroke='transparent']")) return;
+  event.preventDefault();
+  const hadSelection = Boolean(selected.kind);
   selected = { kind: null, id: null };
   panDrag = {
     startX: event.clientX,
     startY: event.clientY,
     left: els.canvasScroll.scrollLeft,
     top: els.canvasScroll.scrollTop,
+    moved: false,
+    hadSelection,
   };
   els.canvasScroll.classList.add("panning");
-  render();
 }
 
 function onDocumentMouseMove(event) {
@@ -862,6 +871,7 @@ function onDocumentMouseMove(event) {
   if (panDrag) {
     els.canvasScroll.scrollLeft = panDrag.left - (event.clientX - panDrag.startX);
     els.canvasScroll.scrollTop = panDrag.top - (event.clientY - panDrag.startY);
+    panDrag.moved = true;
   }
 }
 
@@ -876,8 +886,10 @@ function onDocumentMouseUp() {
     render();
   }
   if (panDrag) {
+    const needsRender = panDrag.moved || panDrag.hadSelection;
     panDrag = null;
     els.canvasScroll.classList.remove("panning");
+    if (needsRender) render();
   }
 }
 
@@ -950,7 +962,9 @@ function closeInlineEditor(commit) {
   const { textarea, commit: commitFn } = inlineEditor;
   inlineEditor = null;
   if (commit) commitFn(textarea.value);
-  if (textarea.parentNode) textarea.remove();
+  if (textarea.parentNode?.contains(textarea)) {
+    textarea.parentNode.removeChild(textarea);
+  }
   render();
 }
 

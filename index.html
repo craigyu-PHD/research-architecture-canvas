@@ -18,7 +18,6 @@
         <button id="helpTabBtn" class="tab-btn" type="button">使用說明</button>
       </nav>
       <div class="status-group">
-        <span id="engineStatus" class="status-pill">本地即時分析</span>
         <button id="themeToggleBtn" class="ghost-btn vivid" type="button">暗黑模式</button>
         <button id="saveLocalBtn" class="ghost-btn" type="button">儲存草稿</button>
       </div>
@@ -39,12 +38,7 @@
           </div>
           <textarea id="researchInput" spellcheck="false" placeholder="貼上研究主題、資料來源、研究架構、研究流程、方法、核心分析、研究輸出。"></textarea>
           <div class="button-row">
-            <button id="analyzeBtn" class="primary-btn" type="button">AI 解析生成</button>
-            <button id="clearInputBtn" class="secondary-btn" type="button">清空</button>
-          </div>
-          <div class="analysis-meter" aria-label="分析狀態">
-            <span id="analysisPrimary">待輸入</span>
-            <span id="analysisSecondary">先本地生成，不阻塞畫布</span>
+            <button id="clearInputBtn" class="secondary-btn" type="button">清空文字</button>
           </div>
         </section>
 
@@ -64,6 +58,20 @@
             <button data-diagram="timeline" type="button"><strong>時間軸圖</strong><span>階段、事件、研究期程</span></button>
             <button data-diagram="hierarchy" type="button"><strong>分層架構圖</strong><span>章節、類目、層級</span></button>
             <button data-diagram="network" type="button"><strong>關係網絡圖</strong><span>節點、關係、互動</span></button>
+          </div>
+        </section>
+
+        <section class="panel-section generate-section">
+          <div class="section-head">
+            <div>
+              <h2>AI 解析生成</h2>
+              <p>依照上方文字與圖表類型，先生成一版可編輯的畫布草稿。</p>
+            </div>
+          </div>
+          <button id="analyzeBtn" class="primary-btn wide" type="button">生成圖稿</button>
+          <div class="analysis-meter" aria-label="分析狀態">
+            <span id="analysisPrimary">待輸入</span>
+            <span id="analysisSecondary">先填文字，再選圖表類型，最後生成。</span>
           </div>
         </section>
 
@@ -214,31 +222,35 @@
       <div class="help-hero">
         <p class="eyebrow">Guide</p>
         <h2>使用說明</h2>
-        <p>這個工具的核心邏輯是：先選圖表類型，再讓 AI 根據文字生成初稿，最後用圖框模組與箭頭模組人工修正。</p>
+        <p>這個工具的核心邏輯是：先貼上研究文字，再選圖表類型，最後讓 AI 生成初稿，並用圖框與箭頭工具人工修正。</p>
       </div>
       <div class="help-grid">
         <article>
-          <h3>1. 圖表類型先決定版面</h3>
+          <h3>1. 先貼研究文字</h3>
+          <p>把研究主題、資料來源、方法、流程、變項、輸出與限制貼到文字輸入框，內容越完整，初稿越容易接近需求。</p>
+        </article>
+        <article>
+          <h3>2. 再選圖表類型</h3>
           <p>流程圖適合先後步驟，研究架構圖適合概念與變項，方法流程圖適合資料到輸出的管線，時間軸適合階段與事件。</p>
         </article>
         <article>
-          <h3>2. 圖框形狀有意義</h3>
+          <h3>3. 圖框形狀有意義</h3>
           <p>矩形代表處理，菱形代表判斷，圓角代表起訖，平行四邊形代表資料輸入，文件框代表文獻或產出文件。</p>
         </article>
         <article>
-          <h3>3. 箭頭是獨立工具</h3>
+          <h3>4. 箭頭是獨立工具</h3>
           <p>選擇箭頭模組後，依序點兩個圖框建立連線。線條可改成實線、虛線、回饋線、雙向或無箭頭註記線。</p>
         </article>
         <article>
-          <h3>4. 畫布可以拖曳</h3>
+          <h3>5. 畫布可以拖曳</h3>
           <p>按住畫布空白處拖曳即可平移。滾輪可上下移動，按住 Ctrl 或 Command 加滾輪可縮放。</p>
         </article>
         <article>
-          <h3>5. 直接編輯文字</h3>
+          <h3>6. 直接編輯文字</h3>
           <p>在圖框上雙擊即可在畫布內直接改標題與說明。底部 Flow 區塊也可以雙擊直接修改。</p>
         </article>
         <article>
-          <h3>6. 自動排列與吸附</h3>
+          <h3>7. 自動排列與吸附</h3>
           <p>自動排列會依目前圖表類型重新擺放。吸附網格開啟時，手拉圖框後會自動對齊格線。</p>
         </article>
       </div>
